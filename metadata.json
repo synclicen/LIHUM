@@ -1,0 +1,6 @@
+{
+  "name": "LIHUM: Lihat untuk Umum",
+  "description": "LIHUM (Lihat untuk Umum): Galeri foto tempat elegan dengan integrasi Google Drive, pencarian nama foto, dan fitur unduhan mandiri bagi publik.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
