@@ -10,9 +10,10 @@ interface GalleryViewProps {
   projectId: string;
   onBack: () => void;
   onShare?: (project: any) => void;
+  isAdmin?: boolean;
 }
 
-export default function GalleryView({ projectId, onBack, onShare }: GalleryViewProps) {
+export default function GalleryView({ projectId, onBack, onShare, isAdmin }: GalleryViewProps) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -78,14 +79,15 @@ export default function GalleryView({ projectId, onBack, onShare }: GalleryViewP
       {/* Gallery Header navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-violet-900/30">
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={onBack}
-            className="group flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-[#D4AF37] max-w-max transition-all cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
-            <span>Kembali ke Galeri Utama</span>
-          </button>
-
+          {isAdmin && (
+            <button
+              onClick={onBack}
+              className="group flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-[#D4AF37] max-w-max transition-all cursor-pointer mr-2"
+            >
+              <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+              <span>Kembali ke Galeri Utama</span>
+            </button>
+          )}
           {project && onShare && (
             <button
               onClick={() => onShare(project)}

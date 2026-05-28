@@ -37,3 +37,12 @@ export interface AdminUser {
   photoURL: string | null;
   accessToken: string;
 }
+
+export interface Account {
+  id: string;
+  email: string;
+  role: "admin" | "manager";
+  displayName?: string;
+  addedAt: string;
+}
+

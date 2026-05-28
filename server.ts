@@ -116,6 +116,44 @@ function saveProjects(projects: any) {
   fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf-8");
 }
 
+const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+const DEFAULT_ACCOUNTS = [
+  {
+    id: "admin-seed",
+    email: "synclicen@gmail.com",
+    role: "admin",
+    displayName: "Admin Utama",
+    addedAt: "2026-05-28"
+  }
+];
+
+if (!fs.existsSync(ACCOUNTS_FILE)) {
+  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(DEFAULT_ACCOUNTS, null, 2), "utf-8");
+}
+
+function getAccounts() {
+  try {
+    if (!fs.existsSync(ACCOUNTS_FILE)) {
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(DEFAULT_ACCOUNTS, null, 2), "utf-8");
+    }
+    const data = fs.readFileSync(ACCOUNTS_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    return DEFAULT_ACCOUNTS;
+  }
+}
+
+function saveAccounts(accounts: any) {
+  fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), "utf-8");
+}
+
+function getAccountRole(email: string | undefined): "admin" | "manager" | null {
+  if (!email) return null;
+  const accounts = getAccounts();
+  const acc = accounts.find((a: any) => a.email.toLowerCase() === email.toLowerCase());
+  return acc ? (acc.role as "admin" | "manager") : null;
+}
+
 // API Routes
 
 // Get system configuration (e.g. injected APP_URL for absolute sharing links)
@@ -131,6 +169,115 @@ app.get("/api/config", (req, res) => {
   res.json({
     appUrl: process.env.APP_URL || dynamicUrl || ""
   });
+});
+
+// GET /api/accounts (Admin Only)
+app.get("/api/accounts", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (role !== "admin") {
+    return res.status(403).json({ error: "Akses ditolak. Hanya Admin yang dapat melihat daftar pengguna." });
+  }
+  res.json(getAccounts());
+});
+
+// GET /api/accounts/me
+app.get("/api/accounts/me", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  if (!userEmail) {
+    return res.json({ email: null, role: null });
+  }
+
+  const emailLower = userEmail.toLowerCase();
+  
+  // Auto-seed synclicen@gmail.com if not in list
+  if (emailLower === "synclicen@gmail.com") {
+    const list = getAccounts();
+    if (!list.some((a: any) => a.email.toLowerCase() === "synclicen@gmail.com")) {
+      const newAcc = {
+        id: "admin-synclicen",
+        email: "synclicen@gmail.com",
+        role: "admin",
+        displayName: "Admin Utama",
+        addedAt: new Date().toISOString().split("T")[0]
+      };
+      list.push(newAcc);
+      saveAccounts(list);
+    }
+  }
+
+  const accounts = getAccounts();
+  const acc = accounts.find((a: any) => a.email.toLowerCase() === emailLower);
+  if (acc) {
+    res.json({ email: acc.email, role: acc.role, displayName: acc.displayName });
+  } else {
+    res.json({ email: userEmail, role: null });
+  }
+});
+
+// POST /api/accounts (Admin Only)
+app.post("/api/accounts", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (role !== "admin") {
+    return res.status(403).json({ error: "Akses ditolak. Hanya Admin yang dapat mendaftarkan akun baru." });
+  }
+
+  const { email, role: incomingRole, displayName } = req.body;
+  if (!email || !incomingRole) {
+    return res.status(400).json({ error: "Email dan Peran wajib diisi." });
+  }
+
+  if (incomingRole !== "admin" && incomingRole !== "manager") {
+    return res.status(400).json({ error: "Peran tidak valid. Gunakan 'admin' atau 'manager'." });
+  }
+
+  const accounts = getAccounts();
+  if (accounts.some((a: any) => a.email.toLowerCase() === email.trim().toLowerCase())) {
+    return res.status(400).json({ error: "Akun dengan email ini sudah terdaftar." });
+  }
+
+  const newAcc = {
+    id: email.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    email: email.trim().toLowerCase(),
+    role: incomingRole,
+    displayName: displayName || "",
+    addedAt: new Date().toISOString().split("T")[0]
+  };
+
+  accounts.push(newAcc);
+  saveAccounts(accounts);
+  res.status(201).json(newAcc);
+});
+
+// DELETE /api/accounts/:id (Admin Only)
+app.delete("/api/accounts/:id", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (role !== "admin") {
+    return res.status(403).json({ error: "Akses ditolak. Hanya Admin yang dapat menghapus akun." });
+  }
+
+  const { id } = req.params;
+  const accounts = getAccounts();
+  const accIndex = accounts.findIndex((a: any) => a.id === id);
+
+  if (accIndex === -1) {
+    return res.status(404).json({ error: "Akun tidak ditemukan." });
+  }
+
+  const targetAcc = accounts[accIndex];
+  if (targetAcc.email.toLowerCase() === userEmail.toLowerCase()) {
+    return res.status(400).json({ error: "Anda tidak dapat menghapus akun Anda sendiri." });
+  }
+
+  if (targetAcc.email.toLowerCase() === "synclicen@gmail.com") {
+    return res.status(400).json({ error: "Admin Utama (synclicen@gmail.com) tidak dapat dihapus." });
+  }
+
+  accounts.splice(accIndex, 1);
+  saveAccounts(accounts);
+  res.json({ success: true });
 });
 
 // Get all projects metadata (no bulky photo lists)
@@ -186,6 +333,12 @@ app.get("/api/projects/:id", (req, res) => {
 
 // Create new project
 app.post("/api/projects", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (!role) {
+    return res.status(403).json({ error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." });
+  }
+
   const { name, description, driveFolderUrl, displayMode } = req.body;
   if (!name || !driveFolderUrl) {
     return res.status(400).json({ error: "Nama galeri dan Link Google Drive wajib diisi." });
@@ -227,6 +380,12 @@ app.post("/api/projects", (req, res) => {
 
 // Update project settings
 app.put("/api/projects/:id", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (!role) {
+    return res.status(403).json({ error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." });
+  }
+
   const { id } = req.params;
   const { name, description, driveFolderUrl, displayMode } = req.body;
 
@@ -255,6 +414,12 @@ app.put("/api/projects/:id", (req, res) => {
 
 // Delete project
 app.delete("/api/projects/:id", (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (!role) {
+    return res.status(403).json({ error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." });
+  }
+
   const { id } = req.params;
   const projects = getProjects();
   const filtered = projects.filter((p: any) => p.id !== id);
@@ -267,6 +432,12 @@ app.delete("/api/projects/:id", (req, res) => {
 
 // Sync Google Drive photos
 app.post("/api/projects/:id/sync", async (req, res) => {
+  const userEmail = req.headers["x-user-email"] as string | undefined;
+  const role = getAccountRole(userEmail);
+  if (!role) {
+    return res.status(403).json({ error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." });
+  }
+
   const { id } = req.params;
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {

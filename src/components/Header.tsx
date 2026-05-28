@@ -8,6 +8,7 @@ interface HeaderProps {
   onLogout: () => void;
   isAdminMode: boolean;
   setIsAdminMode: (mode: boolean) => void;
+  role?: "admin" | "manager" | null;
 }
 
 export default function Header({
@@ -15,7 +16,8 @@ export default function Header({
   onLogin,
   onLogout,
   isAdminMode,
-  setIsAdminMode
+  setIsAdminMode,
+  role
 }: HeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-[#4C2A85] border-b border-[#D4AF37]/30 shadow-xl shrink-0">
@@ -49,7 +51,7 @@ export default function Header({
 
           {user ? (
             <div className="flex items-center space-x-2.5">
-              {/* Toggle Admin mode */}
+              {/* Toggle Admin/Manager mode */}
               <button
                 id="toggle-admin-btn"
                 onClick={() => setIsAdminMode(!isAdminMode)}
@@ -58,11 +60,13 @@ export default function Header({
                     ? "bg-[#D4AF37] text-[#4C2A85] shadow-lg shadow-[#D4AF37]/20 hover:bg-[#dfbb66]"
                     : "bg-white/10 text-white hover:bg-white/20 border border-white/10"
                 }`}
-                title="Aktifkan Panel Admin"
+                title={role === "admin" ? "Aktifkan Panel Admin" : "Aktifkan Panel Manajer"}
               >
                 <Shield className="w-3.5 h-3.5" />
                 <span className="hidden md:inline">
-                  {isAdminMode ? "Admin Console: On" : "Admin Console: Off"}
+                  {isAdminMode 
+                    ? `${role === "admin" ? "Console Admin: On" : "Console Manajer: On"}`
+                    : `${role === "admin" ? "Console Admin: Off" : "Console Manajer: Off"}`}
                 </span>
                 <span className="md:hidden">Console</span>
               </button>
@@ -73,16 +77,16 @@ export default function Header({
                   <img
                     referrerPolicy="no-referrer"
                     src={user.photoURL}
-                    alt={user.displayName || "Admin"}
+                    alt={user.displayName || "Pengelola"}
                     className="w-5 h-5 rounded-full border border-[#D4AF37]/35"
                   />
                 ) : (
                   <div className="w-5 h-5 rounded-full bg-amber-500 text-[10px] text-slate-950 flex items-center justify-center font-bold">
-                    A
+                    {role === "admin" ? "A" : "M"}
                   </div>
                 )}
                 <span className="text-[11px] text-white font-medium max-w-[100px] truncate">
-                  {user.displayName?.split(" ")[0] || "Admin"}
+                  {user.displayName?.split(" ")[0] || (role === "admin" ? "Admin" : "Manajer")}
                 </span>
               </div>
 
@@ -91,20 +95,22 @@ export default function Header({
                 id="logout-btn"
                 onClick={onLogout}
                 className="flex items-center space-x-1 p-2 rounded-full text-slate-200 hover:text-red-400 hover:bg-white/5 transition-all"
-                title="Keluar dari Admin"
+                title="Keluar Akun"
               >
                 <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline text-xs">Sign Out</span>
+                <span className="hidden sm:inline text-xs font-semibold">Keluar</span>
               </button>
             </div>
           ) : (
-            <button
-              id="login-btn"
-              onClick={onLogin}
-              className="bg-[#D4AF37] text-[#4C2A85] px-5 py-2 rounded-full font-bold text-xs tracking-wider uppercase shadow-xl hover:bg-[#dfbb66] active:scale-95 transition-all"
-            >
-              Admin Console
-            </button>
+            <div className="flex flex-col items-end">
+              <button
+                id="login-btn"
+                onClick={onLogin}
+                className="bg-[#D4AF37] text-[#4C2A85] px-5 py-2 rounded-full font-bold text-xs tracking-wider uppercase shadow-xl hover:bg-[#dfbb66] active:scale-95 transition-all cursor-pointer"
+              >
+                Masuk Pengelola
+              </button>
+            </div>
           )}
         </div>
       </div>

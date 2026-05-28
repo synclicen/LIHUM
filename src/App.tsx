@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from "motion/react";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string>("");
+  const [role, setRole] = useState<"admin" | "manager" | null>(null);
   const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -38,15 +39,34 @@ export default function App() {
   // Listen to Auth State
   useEffect(() => {
     const unsubscribe = initAuth(
-      (firebaseUser, token) => {
+      async (firebaseUser, token) => {
         setUser(firebaseUser);
         setAccessToken(token);
-        // By default, turn on admin mode once logged in successfully
-        setIsAdminMode(true);
+        
+        // Fetch role from server
+        try {
+          const res = await fetch("/api/accounts/me", {
+            headers: { "x-user-email": firebaseUser.email || "" }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setRole(data.role);
+            // By default, turn on admin mode once logged in successfully as admin or manager
+            setIsAdminMode(!!data.role);
+          } else {
+            setRole(null);
+            setIsAdminMode(false);
+          }
+        } catch (err) {
+          console.error("Gagal mengambil peran akun:", err);
+          setRole(null);
+          setIsAdminMode(false);
+        }
       },
       () => {
         setUser(null);
         setAccessToken("");
+        setRole(null);
         setIsAdminMode(false);
       }
     );
@@ -69,7 +89,21 @@ export default function App() {
       if (result) {
         setUser(result.user);
         setAccessToken(result.accessToken);
-        setIsAdminMode(true);
+        
+        // Fetch role
+        const res = await fetch("/api/accounts/me", {
+          headers: { "x-user-email": result.user.email || "" }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setRole(data.role);
+          if (data.role) {
+            setIsAdminMode(true);
+          } else {
+            setIsAdminMode(false);
+            alert("Akses ditolak. Email Anda tidak terdaftar sebagai Admin atau Manajer di sistem LIHUM.");
+          }
+        }
       }
     } catch (err: any) {
       alert(`Login gagal: ${err.message || err}`);
@@ -80,6 +114,7 @@ export default function App() {
     await adminLogout();
     setUser(null);
     setAccessToken("");
+    setRole(null);
     setIsAdminMode(false);
   };
 
@@ -107,6 +142,7 @@ export default function App() {
         onLogout={handleLogout}
         isAdminMode={isAdminMode}
         setIsAdminMode={setIsAdminMode}
+        role={role}
       />
 
       {/* Main Core Area */}
@@ -125,6 +161,7 @@ export default function App() {
               loadProjects();
             }}
             onShare={(proj) => setShareProject(proj)}
+            isAdmin={isAdminMode && !!user}
           />
         ) : (
           /* OTHERWISE: Display Home Lobby view */
@@ -145,14 +182,36 @@ export default function App() {
                   LIHUM<span className="text-[#D4AF37]">: Lihat Galeri Mandiri</span>
                 </h1>
                 <p className="text-slate-200 text-sm md:text-base leading-relaxed font-light">
-                  Media berbagi foto kegiatan profesional Anda. Admin menyinkronkan folder Google Drive, sementara pengunjung bebas menikmati, menyaring, dan mengunduh foto full-resolution langsung ke media lokal tanpa batas.
+                  Media berbagi foto kegiatan, pengunjung bebas memilih dan mengunduh foto langsung di halaman galeri yang dibagikan secara mandiri.
                 </p>
               </div>
             </div>
 
+            {/* If logged in but role is null (unregistered) */}
+            {user && role === null && (
+              <div className="bg-[#1C0F32]/60 border-2 border-red-500/30 rounded-3xl p-8 text-center max-w-2xl mx-auto shadow-2xl space-y-4 backdrop-blur-md">
+                <p className="text-red-400 font-bold font-serif text-lg flex items-center justify-center space-x-2">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping mr-1" />
+                  Akses Ditolak &mdash; Akun Belum Terdaftar
+                </p>
+                <p className="text-slate-200 text-sm leading-relaxed">
+                  Email Anda <code className="bg-[#0C061A] border border-[#D4AF37]/20 px-2 py-1 rounded text-[#D4AF37] font-mono text-xs">{user.email}</code> telah masuk dengan aman melalui Google Auth, tetapi belum didaftarkan sebagai **Admin** atau **Manajer** di sistem LIHUM.
+                </p>
+                <p className="text-xs text-slate-400">
+                  Silakan hubungi Admin Utama (synclicen@gmail.com) agar email Anda didaftarkan untuk mendapatkan izin akses mengelola & membagikan galeri kegiatan.
+                </p>
+                <button
+                  onClick={handleLogout}
+                  className="mt-2 inline-flex items-center justify-center py-2 px-5 rounded-xl bg-red-650/45 text-red-200 hover:bg-red-900/30 border border-red-900/40 text-xs font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer shadow-lg active:scale-[0.98]"
+                >
+                  Keluar Akun
+                </button>
+              </div>
+            )}
+
             {/* If Admin panel toggled active & User is logged in, show Admin panel */}
             <AnimatePresence mode="wait">
-              {isAdminMode && user && (
+              {isAdminMode && user && role !== null && (
                 <motion.div
                   initial={{ opacity: 0, y: -20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -160,11 +219,16 @@ export default function App() {
                   transition={{ duration: 0.3 }}
                   className="bg-[#120A21]/50 border border-[#D4AF37]/20 p-6 rounded-3xl shadow-2xl"
                 >
-                  <div className="flex items-center space-x-2 mb-6">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#D4AF37] animate-pulse" />
-                    <span className="text-xs uppercase font-mono text-[#D4AF37] tracking-widest font-bold flex items-center space-x-1">
-                      <ShieldCheck className="w-4 h-4 text-[#D4AF37] inline" />
-                      <span>Panel Administrator Aktif</span>
+                  <div className="flex items-center justify-between mb-6 border-b border-[#D4AF37]/10 pb-3">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-[#D4AF37] animate-pulse" />
+                      <span className="text-xs uppercase font-mono text-[#D4AF37] tracking-widest font-bold flex items-center space-x-1">
+                        <ShieldCheck className="w-4 h-4 text-[#D4AF37] inline" />
+                        <span>Panel {role === "admin" ? "Administrator" : "Manajer"} Aktif</span>
+                      </span>
+                    </div>
+                    <span className="text-[10px] bg-[#1F0F3D] border border-[#D4AF37]/25 px-3 py-1 rounded-full text-slate-300 font-mono">
+                      User: {user.email} ({role.toUpperCase()})
                     </span>
                   </div>
                   
@@ -174,6 +238,8 @@ export default function App() {
                     onRefresh={loadProjects}
                     onSelectProject={handleSelectProject}
                     onShare={(proj) => setShareProject(proj)}
+                    userEmail={user.email || ""}
+                    userRole={role}
                   />
                 </motion.div>
               )}
