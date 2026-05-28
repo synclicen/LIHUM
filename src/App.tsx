@@ -179,7 +179,7 @@ export default function App() {
                   <span>Gerbang Galeri Publik</span>
                 </span>
                 <h1 className="text-3xl md:text-5xl font-extrabold font-serif text-white tracking-wide leading-tight">
-                  LIHUM<span className="text-[#D4AF37]">: Lihat Galeri Mandiri</span>
+                  LIHUM<span className="text-[#D4AF37]">: Lihat dan Unduh Mandiri</span>
                 </h1>
                 <p className="text-slate-200 text-sm md:text-base leading-relaxed font-light">
                   Media berbagi foto kegiatan, pengunjung bebas memilih dan mengunduh foto langsung di halaman galeri yang dibagikan secara mandiri.
@@ -283,7 +283,7 @@ export default function App() {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4AF37] font-semibold bg-[#1F0F3D] px-2 py-0.5 rounded">
-                              LIHUM: Lihat Galeri Mandiri
+                              LIHUM: Lihat dan Unduh Mandiri
                             </span>
                             <span className={`text-[9px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-semibold ${
                               project.displayMode === "all"
@@ -351,7 +351,7 @@ export default function App() {
 
       {/* Luxury Footer details */}
       <footer className="bg-[#120A21] border-t border-[#D4AF37]/20 py-8 text-center text-xs text-slate-400 font-mono">
-        <p>&copy; 2026 LIHUM: Lihat Galeri Mandiri.</p>
+        <p>&copy; 2026 LIHUM: Lihat dan Unduh Mandiri.</p>
         <p className="text-[10px] text-[#D4AF37]/85 mt-1">
           Made by Fajrianor - Pusat Hubungan Masyarakat dan Keterbukaan Informasi 2026.
         </p>
