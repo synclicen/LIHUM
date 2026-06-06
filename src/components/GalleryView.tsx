@@ -19,6 +19,7 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activePhoto, setActivePhoto] = useState<Photo | null>(null);
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Debounce search query to prevent excessive backend fetching
   useEffect(() => {
@@ -50,6 +51,38 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
     fetchProjectDetails();
   }, [projectId, debouncedQuery]);
 
+  // Dynamic automatic polling to detect additions, deletions, or changes instantly
+  useEffect(() => {
+    const fetchUpdates = async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}?search=${encodeURIComponent(debouncedQuery)}`);
+        if (res.ok) {
+          const data = await res.json();
+          // Only update if there is an actual change to prevent unnecessary screen flickering
+          setProject(prev => {
+            if (!prev) return data;
+            const sizeOrCountChanged = prev.photoCount !== data.photoCount || prev.photos?.length !== data.photos?.length;
+            if (sizeOrCountChanged) {
+              return data;
+            }
+            // Deep check photo IDs to detect single-photo replacements or name changes
+            const prevIds = (prev.photos || []).map(p => p.id + p.name).join(",");
+            const currIds = (data.photos || []).map(p => p.id + p.name).join(",");
+            if (prevIds !== currIds) {
+              return data;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.warn("Latar belakang gagal memuat update:", err);
+      }
+    };
+
+    const intervalId = setInterval(fetchUpdates, 10000); // Check for additions, deletions, and updates every 10 seconds
+    return () => clearInterval(intervalId);
+  }, [projectId, debouncedQuery]);
+
   // Clear search
   const clearSearch = () => {
     setSearchQuery("");
@@ -75,9 +108,9 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
   const showInitialMessage = isSearchMode && debouncedQuery.trim() === "";
 
   return (
-    <div id="gallery-view-container" className="space-y-8 animate-fadeIn">
+    <div id="gallery-view-container" className="flex-1 flex flex-col h-full overflow-hidden space-y-4 animate-fadeIn">
       {/* Gallery Header navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-violet-900/30">
+      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-violet-900/30">
         <div className="flex flex-wrap items-center gap-3">
           {isAdmin && (
             <button
@@ -111,12 +144,12 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
       </div>
 
       {loading && !project ? (
-        <div className="flex flex-col items-center justify-center py-20">
+        <div className="flex-grow flex flex-col items-center justify-center py-20">
           <Loader2 className="w-10 h-10 text-amber-500 animate-spin mb-4" />
           <p className="text-sm text-slate-400">Menghubungkan ke pangkalan foto LIHUM...</p>
         </div>
       ) : !project ? (
-        <div className="text-center py-16 bg-slate-900/10 rounded-2xl border border-violet-950">
+        <div className="flex-grow flex flex-col justify-center items-center py-16 bg-slate-900/10 rounded-2xl border border-violet-950">
           <p className="text-red-400 text-sm">Gagal memuat galeri. Kemungkinan galeri telah dihapus.</p>
           <button
             onClick={onBack}
@@ -126,97 +159,101 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
           </button>
         </div>
       ) : (
-        <>
-          {/* Gallery Title & Description Hero cards */}
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-slate-950 to-slate-900/90 border border-violet-950 p-6 md:p-8 flex flex-col justify-end space-y-3 shadow-2xl">
-            {/* Background lights decoration */}
-            <div className="absolute top-0 right-0 w-80 h-80 bg-violet-900/10 rounded-full filter blur-[80px] pointer-events-none" />
-            <div className="absolute bottom-0 left-1/4 w-60 h-60 bg-amber-600/5 rounded-full filter blur-[60px] pointer-events-none" />
+        <div className="flex-grow flex flex-col min-h-0 space-y-4">
+          {/* Top Bar with Left Title & Right Search Input */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 flex-shrink-0 w-full bg-[#120A21]/40 border border-violet-900/20 p-2.5 rounded-2xl">
+            {/* Gallery Title & Description Left-aligned */}
+            <div className="relative overflow-hidden rounded-xl bg-violet-950/10 border border-[#D4AF37]/10 p-3 flex-grow md:max-w-xl md:w-auto shadow-md text-left">
+              {/* Background lights decoration */}
+              <div className="absolute inset-0 bg-violet-950/5 backdrop-blur-[1px] pointer-events-none" />
 
-            <div className="space-y-2">
-              <span className="text-[10px] uppercase font-mono tracking-widest text-amber-400 flex items-center space-x-1">
-                <Sparkles className="w-3.5 h-3.5 inline mr-1 text-amber-400" />
-                <span>Eksplorasi Kegiatan</span>
-              </span>
-              <h2 className="text-2xl md:text-3xl font-bold font-serif text-white tracking-wide leading-tight">
-                {project.name}
-              </h2>
-              <p className="text-slate-300 max-w-3xl text-sm leading-relaxed font-light">
-                {project.description || "Temukan foto-foto kegiatan yang berkesan di galeri ini."}
-              </p>
+              <div className="relative z-10 flex flex-col space-y-0.5">
+                <div className="flex items-center space-x-1.5 text-[8px] uppercase font-mono tracking-widest text-amber-400">
+                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  <span>Eksplorasi Kegiatan</span>
+                </div>
+                <h2 className="text-sm md:text-base font-bold font-serif text-white tracking-wide leading-snug">
+                  {project.name}
+                </h2>
+                {project.description && (
+                  <p className="text-slate-400 text-[10px] leading-relaxed font-light line-clamp-1">
+                    {project.description}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Majestic Search Panel with Sleek Interface Theme */}
-          <div className="w-full max-w-3xl mx-auto mb-6">
-            <div className="relative">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={
-                  isSearchMode
-                    ? "Ketik nama foto atau NIM spesifik untuk mengungkap (Wajib)..."
-                    : "Cari foto berdasarkan nama atau NIM..."
-                }
-                className="w-full h-14 pl-12 pr-12 rounded-2xl bg-white border-none shadow-xl text-slate-800 text-md focus:outline-none focus:ring-2 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-sans"
-              />
-              <Search className="w-6 h-6 text-slate-450 absolute left-4 top-4" />
-              {searchQuery && (
-                <button
-                  onClick={clearSearch}
-                  className="absolute right-4 top-4 text-slate-450 hover:text-slate-800 p-1 rounded-full hover:bg-slate-100 transition-all"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+            {/* Compact Search Panel Right-aligned */}
+            <div className="w-full md:max-w-xs flex-shrink-0 flex flex-col justify-center">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={
+                    isSearchMode
+                      ? "Ketik kata kunci / NIM (Wajib)..."
+                      : "Cari foto atau NIM..."
+                  }
+                  className="w-full h-10 pl-9 pr-9 rounded-lg bg-white border-none shadow-md text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-sans"
+                />
+                <Search className="w-4 h-4 text-slate-450 absolute left-3 top-3" />
+                {searchQuery && (
+                  <button
+                    onClick={clearSearch}
+                    className="absolute right-2.5 top-2.5 text-slate-450 hover:text-slate-800 p-0.5 rounded-full hover:bg-slate-100 transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {isSearchMode && (
+                <div className="mt-1 flex items-center justify-start space-x-1 text-[8px] text-[#D4AF37]/90 font-mono">
+                  <Lock className="w-2.5 h-2.5 text-[#D4AF37] shrink-0" />
+                  <span>Mode Cari Aktif</span>
+                </div>
               )}
             </div>
-
-            {isSearchMode && (
-              <div className="mt-4 flex items-center justify-center space-x-1.5 text-[11px] text-[#D4AF37]/90 font-mono">
-                <Lock className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-                <span>Mode Cari Saja Aktif: Galeri aman terpilih. Hubungi Admin atau gunakan kata kunci untuk melihat.</span>
-              </div>
-            )}
           </div>
 
           {/* Results Display */}
-          <div className="pt-2">
+          <div ref={scrollContainerRef} className="flex-grow min-h-0 overflow-y-auto pr-1 select-none custom-scrollbar pb-6 pt-1">
             {loading ? (
-              <div className="flex justify-center items-center py-16">
+              <div className="flex justify-center items-center py-12">
                 <Loader2 className="w-7 h-7 text-amber-500 animate-spin mr-2" />
                 <span className="text-xs text-slate-400 font-mono">Memperbarui hasil...</span>
               </div>
             ) : showInitialMessage ? (
               /* Search-only initial welcome */
-              <div className="text-center py-20 px-8 rounded-2xl bg-slate-900/20 border border-violet-950/40 max-w-xl mx-auto space-y-4">
-                <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center justify-center mx-auto shadow-md">
-                  <Lock className="w-5 h-5 text-amber-400" />
+              <div className="text-center py-12 px-6 rounded-2xl bg-slate-900/20 border border-violet-950/40 max-w-md mx-auto space-y-4">
+                <div className="w-10 h-10 bg-amber-500/10 border border-amber-500/20 rounded-full flex items-center justify-center mx-auto shadow-md">
+                  <Lock className="w-4 h-4 text-amber-400" />
                 </div>
                 <div>
-                  <h3 className="font-serif text-md font-semibold text-slate-200">Keamanan Galeri Aktif</h3>
-                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                  <h3 className="font-serif text-sm font-semibold text-slate-200">Keamanan Galeri Aktif</h3>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                     Atas permintaan Admin, seluruh foto dalam galeri ini disembunyikan secara default. Pengunjung umum dapat menemukannya dengan mengetik kata kunci pada kotak pencarian di atas.
                   </p>
-                  <p className="text-[10px] text-amber-500/70 font-mono mt-3">
+                  <p className="text-[9px] text-amber-500/70 font-mono mt-2">
                     Contoh pencarian pada demo: Hubungi &quot;Palace&quot;, &quot;Aurora&quot;, atau &quot;Ocean&quot;.
                   </p>
                 </div>
               </div>
             ) : project.photos.length === 0 ? (
               /* No files found */
-              <div className="text-center py-16 rounded-2xl border border-dashed border-violet-950 bg-slate-950/50">
+              <div className="text-center py-12 rounded-2xl border border-dashed border-violet-950 bg-slate-950/50">
                 <ImageIcon className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-                <p className="text-sm text-slate-400">Tidak ada foto kegiatan yang cocok dengan pencarian Anda.</p>
+                <p className="text-xs text-slate-400">Tidak ada foto kegiatan yang cocok dengan pencarian Anda.</p>
                 {debouncedQuery && (
-                  <p className="text-xs text-slate-500 mt-1">Coba gunakan kata kunci nama atau NIM lain.</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Coba gunakan kata kunci nama atau NIM lain.</p>
                 )}
               </div>
             ) : (
               /* Main Beautiful Grid */
               <motion.div 
                 layout
-                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"
+                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6"
               >
                 <AnimatePresence mode="popLayout">
                   {project.photos.map((photo, index) => {
@@ -235,7 +272,7 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
                       >
                         {/* Photo Box */}
                         <div 
-                          className="relative aspect-3/2 bg-slate-100 overflow-hidden cursor-pointer"
+                          className="relative aspect-3/2 bg-slate-100 overflow-hidden cursor-pointer selection:bg-none"
                           onClick={() => setActivePhoto(photo)}
                         >
                           {/* Image display */}
@@ -246,65 +283,44 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
                             loading="lazy"
                           />
                           
-                          {/* Sleek Gradient Overlay with instant download buttons */}
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3.5">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(photo);
-                              }}
-                              className="bg-[#D4AF37] text-[#4C2A85] w-full py-2 rounded-lg text-xs font-extrabold uppercase hover:bg-white tracking-wider transition-colors shadow-2xl"
-                            >
-                              Download HD
-                            </button>
-                          </div>
-
                           {/* Quick size Tag in Sleek monospace */}
                           {photo.size && (
-                            <span className="absolute top-2.5 right-2.5 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm">
+                            <span className="absolute top-2.5 right-2.5 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
                               {photo.size}
                             </span>
                           )}
+
+                          {/* Quick download button directly on the image */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownload(photo);
+                            }}
+                            className="absolute bottom-2.5 right-2.5 z-10 bg-[#D4AF37] hover:bg-[#dfbb66] active:scale-90 text-[#4C2A85] p-2 rounded-lg shadow-md transition-all cursor-pointer"
+                            title="Unduh Langsung"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
                         </div>
 
-                        {/* Detail text - White Asgard Marble clean UI */}
-                        <div className="p-4 flex-1 flex flex-col justify-between bg-white">
-                          <div className="space-y-1">
+                        {/* Detail text - White Asgard Marble clean UI (No separate footer button row) */}
+                        <div className="p-3 bg-white">
+                          <div className="space-y-0.5">
                             {/* Photo Title */}
                             <h3 
                               onClick={() => setActivePhoto(photo)}
-                              className="font-serif text-sm font-bold text-slate-900 line-clamp-1 hover:text-[#4C2A85] cursor-pointer transition-colors"
+                              className="font-serif text-xs font-bold text-slate-900 line-clamp-1 hover:text-[#4C2A85] cursor-pointer transition-colors"
                               title={photo.name}
                             >
                               {cleanName}
                             </h3>
                             <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-mono text-slate-500 truncate text-[11px] leading-tight max-w-[150px]">
+                              <span className="text-[9px] font-mono text-slate-400 truncate leading-tight max-w-full">
                                 {photo.name}
                               </span>
-                              <span className="text-[9px] font-mono uppercase tracking-widest text-[#D4AF37] font-extrabold bg-[#1F0F3D] px-1.5 py-0.5 rounded">
-                                {photo.mimeType.split("/")[1] || "JPEG"}
-                              </span>
                             </div>
-                          </div>
-
-                          {/* Action Foot in sleek white structure */}
-                          <div className="flex items-center justify-between border-t border-slate-100 mt-4 pt-3 text-[11px] text-slate-400">
-                            <span className="font-mono text-[10px]">{photo.createdTime || "Baru"}</span>
-                            
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(photo);
-                              }}
-                              className="text-slate-550 hover:text-[#4C2A85] p-1 rounded-full hover:bg-slate-50 transition-colors"
-                              title="Download Instantly"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                              </svg>
-                            </button>
                           </div>
                         </div>
                       </motion.div>
@@ -314,7 +330,7 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
               </motion.div>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Photobox Fullscreen Modal Lightbox */}
@@ -354,58 +370,53 @@ export default function GalleryView({ projectId, onBack, onShare, isAdmin }: Gal
                 </div>
 
                 {/* Info dashboard - right (Pearl and gold styling) */}
-                <div className="lg:col-span-4 p-6 md:p-8 flex flex-col justify-between bg-[#F8F9FA] border-t lg:border-t-0 lg:border-l border-slate-200">
-                  <div className="space-y-5">
-                    <div>
-                      <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4AF37] font-extrabold bg-[#1F0F3D] px-2 py-0.5 rounded">
-                        Pustaka Foto LIHUM
+                <div className="lg:col-span-4 p-6 md:p-8 flex flex-col justify-start bg-[#F8F9FA] border-t lg:border-t-0 lg:border-l border-slate-200 space-y-6">
+                  <div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[9px] uppercase font-mono tracking-widest text-[#D4AF37] font-extrabold bg-[#1F0F3D] px-2 py-0.5 rounded">
+                        LIHUM: Lihat, Unduh Mandiri
                       </span>
-                      <h3 className="font-serif text-lg md:text-xl font-bold text-slate-900 mt-2 tracking-wide leading-snug">
-                        {formatPhotoName(activePhoto.name)}
-                      </h3>
-                      <p className="text-xs text-slate-450 font-mono mt-1 select-all break-all overflow-hidden text-ellipsis">
-                        ID: {activePhoto.id}
-                      </p>
+                      
+                      {/* Compact Premium Download Button at the top */}
+                      <button
+                        onClick={() => handleDownload(activePhoto)}
+                        className="flex items-center space-x-1.5 py-1.5 px-3.5 bg-[#D4AF37] text-[#4C2A85] hover:bg-[#dfbb66] active:scale-95 font-extrabold rounded-lg text-[10px] tracking-wider uppercase transition-all shadow-md cursor-pointer select-none"
+                        title="Download Gambar"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Unduh</span>
+                      </button>
                     </div>
 
-                    <div className="space-y-3 list-none text-xs border-y border-slate-205 py-5">
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center space-x-1.5 text-slate-500">
-                          <HardDrive className="w-4 h-4 text-slate-400" />
-                          <span>Ukuran File:</span>
-                        </span>
-                        <span className="font-mono font-bold text-slate-900">{activePhoto.size || "Unknown"}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center space-x-1.5 text-slate-500">
-                          <Download className="w-4 h-4 text-slate-400" />
-                          <span>Format Mime:</span>
-                        </span>
-                        <span className="font-mono text-slate-900">{activePhoto.mimeType}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center space-x-1.5 text-slate-500">
-                          <Calendar className="w-4 h-4 text-slate-400" />
-                          <span>Ditambahkan:</span>
-                        </span>
-                        <span className="font-mono text-slate-900">{activePhoto.createdTime || "Baru"}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 pt-6">
-                    {/* Big Download Button matching Sleek Interface Gold/Purple */}
-                    <button
-                      onClick={() => handleDownload(activePhoto)}
-                      className="w-full select-none flex items-center justify-center space-x-2 py-3.5 px-6 bg-[#D4AF37] text-[#4C2A85] hover:bg-[#dfbb66] hover:scale-[1.01] font-extrabold rounded-xl text-xs tracking-wider uppercase transition-all shadow-lg active:scale-98"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Download Gambar High-Res</span>
-                    </button>
-                    <p className="text-[10px] text-center text-slate-450">
-                      Foto diunduh secara penuh dan langsung disimpan ke perangkat Anda.
+                    <h3 className="font-serif text-lg md:text-xl font-bold text-slate-900 mt-4 tracking-wide leading-snug">
+                      {formatPhotoName(activePhoto.name)}
+                    </h3>
+                    <p className="text-[10px] text-slate-450 font-mono mt-1 select-all break-all overflow-hidden text-ellipsis">
+                      ID: {activePhoto.id}
                     </p>
                   </div>
+
+                  <div className="space-y-3 list-none text-xs border-t border-slate-200 pt-5">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center space-x-1.5 text-slate-500">
+                        <HardDrive className="w-4 h-4 text-slate-400" />
+                        <span>Ukuran File:</span>
+                      </span>
+                      <span className="font-mono font-bold text-slate-900">{activePhoto.size || "Unknown"}</span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center space-x-1.5 text-slate-500">
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        <span>Ditambahkan:</span>
+                      </span>
+                      <span className="font-mono text-slate-900">{activePhoto.createdTime || "Baru"}</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed pt-2">
+                    Foto diunduh secara penuh dan langsung disimpan ke perangkat Anda.
+                  </p>
                 </div>
               </div>
             </motion.div>

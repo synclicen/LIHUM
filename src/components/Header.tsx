@@ -35,7 +35,7 @@ export default function Header({
               LIHUM
             </span>
             <div className="text-[9px] text-[#D4AF37]/80 uppercase font-mono tracking-widest leading-none">
-              Lihat dan Unduh Mandiri
+              Lihat, Unduh Mandiri!
             </div>
           </div>
         </div>

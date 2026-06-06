@@ -35,6 +35,8 @@ export default function AdminPanel({
   const [description, setDescription] = useState("");
   const [driveFolderUrl, setDriveFolderUrl] = useState("");
   const [displayMode, setDisplayMode] = useState<"all" | "search">("all");
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [autoSyncInterval, setAutoSyncInterval] = useState<"1m" | "3m" | "5m" | "1h" | "6h">("3m");
 
   // Account form/management states
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -48,6 +50,10 @@ export default function AdminPanel({
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  // Confirmation Modal states
+  const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [accountToDelete, setAccountToDelete] = useState<{ id: string; email: string } | null>(null);
+
   const resetForm = () => {
     setIsEditing(false);
     setEditingId(null);
@@ -55,6 +61,8 @@ export default function AdminPanel({
     setDescription("");
     setDriveFolderUrl("");
     setDisplayMode("all");
+    setAutoSyncEnabled(false);
+    setAutoSyncInterval("3m");
     setErrorMsg("");
   };
 
@@ -65,6 +73,8 @@ export default function AdminPanel({
     setDescription(project.description);
     setDriveFolderUrl(project.driveFolderUrl);
     setDisplayMode(project.displayMode);
+    setAutoSyncEnabled(!!project.autoSyncEnabled);
+    setAutoSyncInterval(project.autoSyncInterval || "3m");
     setErrorMsg("");
   };
 
@@ -115,7 +125,7 @@ export default function AdminPanel({
           "Content-Type": "application/json",
           "x-user-email": userEmail
         },
-        body: JSON.stringify({ name, description, driveFolderUrl, displayMode })
+        body: JSON.stringify({ name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval })
       });
 
       if (!res.ok) {
@@ -136,13 +146,17 @@ export default function AdminPanel({
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    const isConfirmed = window.confirm(`Apakah Anda yakin ingin menghapus galeri "${name}"? Seluruh metadata foto yang tersinkron akan ikut terhapus.`);
-    if (!isConfirmed) return;
+  const handleDelete = (id: string, name: string) => {
+    setProjectToDelete({ id, name });
+  };
 
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return;
+    const { id } = projectToDelete;
     setIsLoading(true);
     setErrorMsg("");
     setSuccessMsg("");
+    setProjectToDelete(null);
 
     try {
       const res = await fetch(`/api/projects/${id}`, {
@@ -243,13 +257,17 @@ export default function AdminPanel({
     }
   };
 
-  const handleDeleteAccount = async (id: string, email: string) => {
-    const isConfirmed = window.confirm(`Apakah Anda yakin ingin mencabut hak akses bagi akun "${email}"?`);
-    if (!isConfirmed) return;
+  const handleDeleteAccount = (id: string, email: string) => {
+    setAccountToDelete({ id, email });
+  };
 
+  const confirmDeleteAccount = async () => {
+    if (!accountToDelete) return;
+    const { id, email } = accountToDelete;
     setIsLoading(true);
     setErrorMsg("");
     setSuccessMsg("");
+    setAccountToDelete(null);
 
     try {
       const res = await fetch(`/api/accounts/${id}`, {
@@ -432,6 +450,49 @@ export default function AdminPanel({
                 </div>
               </div>
 
+              {/* Auto Sync Settings Section */}
+              <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+                    Sinkron Otomatis
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      checked={autoSyncEnabled} 
+                      onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                      className="sr-only peer" 
+                    />
+                    <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
+                    <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
+                      {autoSyncEnabled ? "AKTIF" : "NONAKTIF"}
+                    </span>
+                  </label>
+                </div>
+
+                {autoSyncEnabled && (
+                  <div className="space-y-1.5 animate-fadeIn">
+                    <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      Interval Waktu:
+                    </label>
+                    <select
+                      value={autoSyncInterval}
+                      onChange={(e) => setAutoSyncInterval(e.target.value as any)}
+                      className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
+                    >
+                      <option className="bg-[#120A21]" value="1m">Setiap 1 Menit</option>
+                      <option className="bg-[#120A21]" value="3m">Setiap 3 Menit</option>
+                      <option className="bg-[#120A21]" value="5m">Setiap 5 Menit</option>
+                      <option className="bg-[#120A21]" value="1h">Setiap 1 Jam</option>
+                      <option className="bg-[#120A21]" value="6h">Setiap 6 Jam</option>
+                    </select>
+                    <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+                      *Tautan sinkronisasi berjalan otomatis di background ketika browser Admin/Manajer terhubung.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <div className="flex space-x-2 pt-2">
                 <button
                   type="submit"
@@ -532,6 +593,19 @@ export default function AdminPanel({
                               <span className="truncate max-w-[80px]">Buka Link</span>
                               <ExternalLink className="w-2.5 h-2.5" />
                             </a>
+                          </div>
+                          <div className="flex items-center justify-between border-t border-violet-950/35 pt-1.5 mt-1.5">
+                            <span className="text-slate-500 flex items-center space-x-1">
+                              <RefreshCw className={`w-3 h-3 ${project.autoSyncEnabled ? "animate-spin text-[#D4AF37]" : "text-slate-500"}`} />
+                              <span>Sinkron Otomatis:</span>
+                            </span>
+                            <span className={`font-mono font-bold text-[10px] ${project.autoSyncEnabled ? "text-[#D4AF37]" : "text-slate-550"}`}>
+                              {project.autoSyncEnabled ? (
+                                `Aktif (${project.autoSyncInterval === "1m" ? "1 Menit" : project.autoSyncInterval === "3m" ? "3 Menit" : project.autoSyncInterval === "5m" ? "5 Menit" : project.autoSyncInterval === "1h" ? "1 Jam" : "6 Jam"})`
+                              ) : (
+                                "Mati"
+                              )}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -785,6 +859,75 @@ export default function AdminPanel({
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Project Deletion */}
+      {projectToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="bg-[#120A21] border-2 border-red-500/40 rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl relative space-y-5 animate-in fade-in zoom-in duration-200">
+            <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500 text-red-500 flex items-center justify-center mx-auto mb-2 animate-bounce">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-serif font-bold text-white">Yakin Hapus Galeri ini?</h3>
+              <p className="text-xs text-slate-350 leading-relaxed">
+                Anda akan menghapus galeri <span className="font-bold text-[#D4AF37]">&quot;{projectToDelete.name}&quot;</span> secara permanen. Seluruh foto yang tersinkronasi di halaman ini juga akan terhapus dari metadata LIHUM server.
+              </p>
+              <p className="text-[10px] text-red-400 font-semibold uppercase tracking-wider">
+                Tindakan ini tidak dapat dibatalkan!
+              </p>
+            </div>
+            <div className="flex space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setProjectToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteProject}
+                className="flex-1 py-2.5 rounded-xl bg-red-650/80 hover:bg-red-600 text-white text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer shadow-lg hover:shadow-red-500/20 active:scale-95 border border-red-500/30"
+              >
+                Ya, Hapus Galeri
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Account Access Revocation */}
+      {accountToDelete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="bg-[#120A21] border-2 border-red-500/40 rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl relative space-y-5 animate-in fade-in zoom-in duration-200">
+            <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500 text-red-500 flex items-center justify-center mx-auto mb-2 animate-bounce">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-serif font-bold text-white">Cabut Hak Akses?</h3>
+              <p className="text-xs text-slate-350 leading-relaxed">
+                Apakah Anda yakin ingin mencabut seluruh hak akses pengelolaan bagi email <span className="font-mono text-[#D4AF37]">&quot;{accountToDelete.email}&quot;</span>? Akun ini tidak akan dapat berpindah ke dashboard pengelola setelah ini.
+              </p>
+            </div>
+            <div className="flex space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setAccountToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAccount}
+                className="flex-1 py-2.5 rounded-xl bg-red-650/80 hover:bg-red-600 text-white text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer shadow-lg hover:shadow-red-500/20 active:scale-95 border border-red-500/30"
+              >
+                Cabut Izin
+              </button>
+            </div>
           </div>
         </div>
       )}

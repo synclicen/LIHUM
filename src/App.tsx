@@ -132,8 +132,71 @@ export default function App() {
     }
   };
 
+  // Polling for latest metadata so that public visitors automatically get synced updates when there are changes
+  useEffect(() => {
+    const fetchMetadataInterval = setInterval(() => {
+      loadProjects();
+    }, 15000); // Check every 15 seconds
+
+    return () => clearInterval(fetchMetadataInterval);
+  }, []);
+
+  // Automated background sync scheduler for projects with autoSyncEnabled = true
+  useEffect(() => {
+    if (!accessToken || !user || projects.length === 0) return;
+
+    const intervals: NodeJS.Timeout[] = [];
+
+    projects.forEach((proj) => {
+      if (!proj.autoSyncEnabled) return;
+
+      // Determine interval in milliseconds
+      let ms = 180000; // default 3 minutes
+      switch (proj.autoSyncInterval) {
+        case "1m": ms = 60000; break;
+        case "3m": ms = 180000; break;
+        case "5m": ms = 300000; break;
+        case "1h": ms = 3600000; break;
+        case "6h": ms = 21600000; break;
+      }
+
+      console.log(`[Auto-Sync] Scheduled for "${proj.name}" active every ${proj.autoSyncInterval} (${ms}ms)`);
+
+      // Handler to trigger the sync API request
+      const runSync = async () => {
+        try {
+          console.log(`[Auto-Sync] Syncing "${proj.name}" in background...`);
+          const res = await fetch(`/api/projects/${proj.id}/sync`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "x-user-email": user.email || ""
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            console.log(`[Auto-Sync] Done. Synced ${data.photoCount} photos for "${proj.name}"`);
+            
+            // Silence-update the main list so visitors or admins see changes instantly
+            loadProjects();
+          }
+        } catch (err) {
+          console.error(`[Auto-Sync] Sync failed for "${proj.name}":`, err);
+        }
+      };
+
+      // Set up timer
+      const timerId = setInterval(runSync, ms);
+      intervals.push(timerId);
+    });
+
+    return () => {
+      intervals.forEach((id) => clearInterval(id));
+    };
+  }, [accessToken, user, projects.map(p => `${p.id}-${p.autoSyncEnabled}-${p.autoSyncInterval}`).join(",")]);
+
   return (
-    <div className="min-h-screen bg-[#0c0714] text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-100">
+    <div className={`bg-[#0c0714] text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-100 ${selectedProjectId ? "h-[100dvh] overflow-hidden" : "min-h-screen"}`}>
       
       {/* Top Banner Navigation */}
       <Header
@@ -146,7 +209,7 @@ export default function App() {
       />
 
       {/* Main Core Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-12">
+      <main className={`flex-1 w-full mx-auto flex flex-col ${selectedProjectId ? "px-4 sm:px-6 lg:px-8 py-4 md:py-6 overflow-hidden min-h-0 max-w-none" : "max-w-7xl px-4 sm:px-6 lg:px-8 py-10 space-y-12"}`}>
         
         {/* If a specific Gallery is SELECTED by visitor, load the gallery view */}
         {selectedProjectId ? (
@@ -179,7 +242,7 @@ export default function App() {
                   <span>Gerbang Galeri Publik</span>
                 </span>
                 <h1 className="text-3xl md:text-5xl font-extrabold font-serif text-white tracking-wide leading-tight">
-                  LIHUM<span className="text-[#D4AF37]">: Lihat dan Unduh Mandiri</span>
+                  LIHUM<span className="text-[#D4AF37]">: Lihat, Unduh Mandiri!</span>
                 </h1>
                 <p className="text-slate-200 text-sm md:text-base leading-relaxed font-light">
                   Media berbagi foto kegiatan, pengunjung bebas memilih dan mengunduh foto langsung di halaman galeri yang dibagikan secara mandiri.
@@ -283,7 +346,7 @@ export default function App() {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4AF37] font-semibold bg-[#1F0F3D] px-2 py-0.5 rounded">
-                              LIHUM: Lihat dan Unduh Mandiri
+                              LIHUM: Lihat, Unduh Mandiri!
                             </span>
                             <span className={`text-[9px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-semibold ${
                               project.displayMode === "all"
@@ -350,10 +413,10 @@ export default function App() {
       </main>
 
       {/* Luxury Footer details */}
-      <footer className="bg-[#120A21] border-t border-[#D4AF37]/20 py-8 text-center text-xs text-slate-400 font-mono">
-        <p>&copy; 2026 LIHUM: Lihat dan Unduh Mandiri.</p>
-        <p className="text-[10px] text-[#D4AF37]/85 mt-1">
-          Made by Fajrianor - Pusat Hubungan Masyarakat dan Keterbukaan Informasi 2026.
+      <footer className={`bg-[#120A21] border-t border-[#D4AF37]/20 text-center text-xs text-slate-400 font-mono shrink-0 ${selectedProjectId ? "py-4 text-[10px]" : "py-8"}`}>
+        <p>&copy; 2026 LIHUM: Lihat, Unduh Mandiri!</p>
+        <p className={`text-[#D4AF37]/85 mt-0.5 ${selectedProjectId ? "text-[9px]" : "text-[10px]"}`}>
+          Made by Fajrianor - Pusat Humas dan Keterbukaan Informasi 2026.
         </p>
       </footer>
 

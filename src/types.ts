@@ -18,6 +18,9 @@ export interface Project {
   photos: Photo[];
   photoCount: number;
   createdAt: string;
+  autoSyncEnabled?: boolean;
+  autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
+  lastSyncedAt?: string;
 }
 
 export interface ProjectSummary {
@@ -29,6 +32,9 @@ export interface ProjectSummary {
   displayMode: "all" | "search";
   photoCount: number;
   createdAt: string;
+  autoSyncEnabled?: boolean;
+  autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
+  lastSyncedAt?: string;
 }
 
 export interface AdminUser {

@@ -290,6 +290,9 @@ app.get("/api/projects", (req, res) => {
     driveFolderUrl: p.driveFolderUrl,
     driveFolderId: p.driveFolderId,
     displayMode: p.displayMode,
+    autoSyncEnabled: p.autoSyncEnabled || false,
+    autoSyncInterval: p.autoSyncInterval || "3m",
+    lastSyncedAt: p.lastSyncedAt || "",
     photoCount: p.photoCount || (p.photos ? p.photos.length : 0),
     createdAt: p.createdAt
   }));
@@ -339,7 +342,7 @@ app.post("/api/projects", (req, res) => {
     return res.status(403).json({ error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." });
   }
 
-  const { name, description, driveFolderUrl, displayMode } = req.body;
+  const { name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval } = req.body;
   if (!name || !driveFolderUrl) {
     return res.status(400).json({ error: "Nama galeri dan Link Google Drive wajib diisi." });
   }
@@ -368,6 +371,9 @@ app.post("/api/projects", (req, res) => {
     driveFolderUrl,
     driveFolderId,
     displayMode: displayMode || "all",
+    autoSyncEnabled: autoSyncEnabled === true,
+    autoSyncInterval: autoSyncInterval || "3m",
+    lastSyncedAt: "",
     photos: [],
     photoCount: 0,
     createdAt: new Date().toISOString().split("T")[0]
@@ -387,7 +393,7 @@ app.put("/api/projects/:id", (req, res) => {
   }
 
   const { id } = req.params;
-  const { name, description, driveFolderUrl, displayMode } = req.body;
+  const { name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval, lastSyncedAt } = req.body;
 
   const projects = getProjects();
   const index = projects.findIndex((p: any) => p.id === id);
@@ -405,7 +411,10 @@ app.put("/api/projects/:id", (req, res) => {
     description: description !== undefined ? description : projects[index].description,
     driveFolderUrl: driveFolderUrl || projects[index].driveFolderUrl,
     driveFolderId,
-    displayMode: displayMode || projects[index].displayMode
+    displayMode: displayMode || projects[index].displayMode,
+    autoSyncEnabled: autoSyncEnabled !== undefined ? (autoSyncEnabled === true) : projects[index].autoSyncEnabled,
+    autoSyncInterval: autoSyncInterval || projects[index].autoSyncInterval || "3m",
+    lastSyncedAt: lastSyncedAt !== undefined ? lastSyncedAt : projects[index].lastSyncedAt || ""
   };
 
   saveProjects(projects);
@@ -500,12 +509,14 @@ app.post("/api/projects/:id/sync", async (req, res) => {
 
     projects[index].photos = mappedPhotos;
     projects[index].photoCount = mappedPhotos.length;
+    projects[index].lastSyncedAt = new Date().toISOString();
     saveProjects(projects);
 
     res.json({
       success: true,
       photoCount: mappedPhotos.length,
-      photos: mappedPhotos
+      photos: mappedPhotos,
+      lastSyncedAt: projects[index].lastSyncedAt
     });
   } catch (err: any) {
     console.error("Drive Sync Error:", err);
