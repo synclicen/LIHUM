@@ -12,6 +12,7 @@
     "enabled": true
   },
   "vars": {
+    "DATABASE_URL": "libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io",
     "APP_URL": ""
   }
 }
