@@ -1,0 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-brand-purple: #4C2A85;
+  --color-brand-gold: #D4AF37;
+  --color-brand-light: #F8F9FA;
+  --color-brand-purple-dark: #1F0F3D;
+  --color-brand-purple-deep: #0C061A;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #0C061A;
+  --foreground: #F8F9FA;
+  --card: #120A21;
+  --card-foreground: #F8F9FA;
+  --popover: #120A21;
+  --popover-foreground: #F8F9FA;
+  --primary: #D4AF37;
+  --primary-foreground: #4C2A85;
+  --secondary: #1F0F3D;
+  --secondary-foreground: #F8F9FA;
+  --muted: #1F0F3D;
+  --muted-foreground: #94A3B8;
+  --accent: #4C2A85;
+  --accent-foreground: #F8F9FA;
+  --destructive: #EF4444;
+  --destructive-foreground: #F8F9FA;
+  --border: rgba(212, 175, 55, 0.2);
+  --input: rgba(212, 175, 55, 0.2);
+  --ring: #D4AF37;
+  --chart-1: #D4AF37;
+  --chart-2: #4C2A85;
+  --chart-3: #1F0F3D;
+  --chart-4: #F8F9FA;
+  --chart-5: #0C061A;
+  --sidebar: #120A21;
+  --sidebar-foreground: #F8F9FA;
+  --sidebar-primary: #D4AF37;
+  --sidebar-primary-foreground: #4C2A85;
+  --sidebar-accent: #1F0F3D;
+  --sidebar-accent-foreground: #F8F9FA;
+  --sidebar-border: rgba(212, 175, 55, 0.2);
+  --sidebar-ring: #D4AF37;
+}
+
+body {
+  background-color: #0C061A;
+  color: #F8F9FA;
+  font-family: var(--font-sans);
+}
+
+/* Custom scrollbars for high premium feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0C061A;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1F0F3D;
+  border-radius: 4px;
+  border: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+/* Slim scrollbar for in-panel scroll areas (used by GalleryView) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.35);
+  border-radius: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.7);
+}
+
+/* Subtle fade-in animation used across the app */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.35s ease-out both;
+}
+
+/* z-index utility used by share modal & confirmation dialogs (Tailwind has no z-100 by default) */
+.z-100 {
+  z-index: 100;
+}

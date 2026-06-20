@@ -1,0 +1,937 @@
+     1→     1→import React, { useState, useEffect } from "react";
+     2→     2→import { ProjectSummary, Project } from "../types";
+     3→     3→import { 
+     4→     4→  FolderKanban, Plus, Edit2, Trash2, RefreshCw, Sliders, 
+     5→     5→  HelpCircle, ExternalLink, Library, CheckCircle, AlertCircle, Info, Lock, Globe, Share2,
+     6→     6→  Users, UserPlus, Shield, Trash
+     7→     7→} from "lucide-react";
+     8→     8→
+     9→     9→interface AdminPanelProps {
+    10→    10→  projects: ProjectSummary[];
+    11→    11→  accessToken: string;
+    12→    12→  onRefresh: () => void;
+    13→    13→  onSelectProject: (id: string, isAdminSelection: boolean) => void;
+    14→    14→  onShare?: (proj: ProjectSummary) => void;
+    15→    15→  userEmail: string;
+    16→    16→  userRole: "admin" | "manager";
+    17→    17→}
+    18→    18→
+    19→    19→export default function AdminPanel({
+    20→    20→  projects,
+    21→    21→  accessToken,
+    22→    22→  onRefresh,
+    23→    23→  onSelectProject,
+    24→    24→  onShare,
+    25→    25→  userEmail,
+    26→    26→  userRole
+    27→    27→}: AdminPanelProps) {
+    28→    28→  // Tab control state
+    29→    29→  const [activeTab, setActiveTab] = useState<"projects" | "accounts">("projects");
+    30→    30→
+    31→    31→  // Form states
+    32→    32→  const [isEditing, setIsEditing] = useState(false);
+    33→    33→  const [editingId, setEditingId] = useState<string | null>(null);
+    34→    34→  const [name, setName] = useState("");
+    35→    35→  const [description, setDescription] = useState("");
+    36→    36→  const [driveFolderUrl, setDriveFolderUrl] = useState("");
+    37→    37→  const [displayMode, setDisplayMode] = useState<"all" | "search">("all");
+    38→    38→  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+    39→    39→  const [autoSyncInterval, setAutoSyncInterval] = useState<"1m" | "3m" | "5m" | "1h" | "6h">("3m");
+    40→    40→
+    41→    41→  // Account form/management states
+    42→    42→  const [accounts, setAccounts] = useState<any[]>([]);
+    43→    43→  const [loadingAccounts, setLoadingAccounts] = useState(false);
+    44→    44→  const [newEmail, setNewEmail] = useState("");
+    45→    45→  const [newDisplayName, setNewDisplayName] = useState("");
+    46→    46→  const [newRole, setNewRole] = useState<"admin" | "manager">("manager");
+    47→    47→
+    48→    48→  const [isLoading, setIsLoading] = useState(false);
+    49→    49→  const [syncingId, setSyncingId] = useState<string | null>(null);
+    50→    50→  const [errorMsg, setErrorMsg] = useState("");
+    51→    51→  const [successMsg, setSuccessMsg] = useState("");
+    52→    52→
+    53→    53→  // Confirmation Modal states
+    54→    54→  const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null);
+    55→    55→  const [accountToDelete, setAccountToDelete] = useState<{ id: string; email: string } | null>(null);
+    56→    56→
+    57→    57→  const resetForm = () => {
+    58→    58→    setIsEditing(false);
+    59→    59→    setEditingId(null);
+    60→    60→    setName("");
+    61→    61→    setDescription("");
+    62→    62→    setDriveFolderUrl("");
+    63→    63→    setDisplayMode("all");
+    64→    64→    setAutoSyncEnabled(false);
+    65→    65→    setAutoSyncInterval("3m");
+    66→    66→    setErrorMsg("");
+    67→    67→  };
+    68→    68→
+    69→    69→  const handleEditClick = (project: ProjectSummary) => {
+    70→    70→    setIsEditing(true);
+    71→    71→    setEditingId(project.id);
+    72→    72→    setName(project.name);
+    73→    73→    setDescription(project.description);
+    74→    74→    setDriveFolderUrl(project.driveFolderUrl);
+    75→    75→    setDisplayMode(project.displayMode);
+    76→    76→    setAutoSyncEnabled(!!project.autoSyncEnabled);
+    77→    77→    setAutoSyncInterval(project.autoSyncInterval || "3m");
+    78→    78→    setErrorMsg("");
+    79→    79→  };
+    80→    80→
+    81→    81→  // Fetch Accounts from server
+    82→    82→  const loadAccounts = async () => {
+    83→    83→    if (userRole !== "admin") return;
+    84→    84→    setLoadingAccounts(true);
+    85→    85→    try {
+    86→    86→      const res = await fetch("/api/accounts", {
+    87→    87→        headers: { "x-user-email": userEmail }
+    88→    88→      });
+    89→    89→      if (!res.ok) throw new Error("Gagal memuat daftar akun.");
+    90→    90→      const data = await res.json();
+    91→    91→      setAccounts(data);
+    92→    92→    } catch (err: any) {
+    93→    93→      console.error(err);
+    94→    94→      setErrorMsg("Gagal memuat daftar akun dari server.");
+    95→    95→    } finally {
+    96→    96→      setLoadingAccounts(false);
+    97→    97→    }
+    98→    98→  };
+    99→    99→
+   100→   100→  // React to tab change
+   101→   101→  useEffect(() => {
+   102→   102→    if (activeTab === "accounts" && userRole === "admin") {
+   103→   103→      loadAccounts();
+   104→   104→    }
+   105→   105→  }, [activeTab, userRole]);
+   106→   106→
+   107→   107→  const handleSubmit = async (e: React.FormEvent) => {
+   108→   108→    e.preventDefault();
+   109→   109→    if (!name.trim() || !driveFolderUrl.trim()) {
+   110→   110→      setErrorMsg("Nama galeri dan Link Google Drive wajib diisi.");
+   111→   111→      return;
+   112→   112→    }
+   113→   113→
+   114→   114→    setIsLoading(true);
+   115→   115→    setErrorMsg("");
+   116→   116→    setSuccessMsg("");
+   117→   117→
+   118→   118→    try {
+   119→   119→      const url = editingId ? `/api/projects/${editingId}` : "/api/projects";
+   120→   120→      const method = editingId ? "PUT" : "POST";
+   121→   121→
+   122→   122→      const res = await fetch(url, {
+   123→   123→        method,
+   124→   124→        headers: { 
+   125→   125→          "Content-Type": "application/json",
+   126→   126→          "x-user-email": userEmail
+   127→   127→        },
+   128→   128→        body: JSON.stringify({ name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval })
+   129→   129→      });
+   130→   130→
+   131→   131→      if (!res.ok) {
+   132→   132→        const err = await res.json();
+   133→   133→        throw new Error(err.error || "Gagal menyimpan galeri.");
+   134→   134→      }
+   135→   135→
+   136→   136→      setSuccessMsg(editingId ? "Galeri berhasil diperbarui!" : "Galeri baru sukses dibuat!");
+   137→   137→      resetForm();
+   138→   138→      onRefresh();
+   139→   139→
+   140→   140→      // Clear success feedback after 4s
+   141→   141→      setTimeout(() => setSuccessMsg(""), 4000);
+   142→   142→    } catch (err: any) {
+   143→   143→      setErrorMsg(err.message || "Gagal memproses galeri.");
+   144→   144→    } finally {
+   145→   145→      setIsLoading(false);
+   146→   146→    }
+   147→   147→  };
+   148→   148→
+   149→   149→  const handleDelete = (id: string, name: string) => {
+   150→   150→    setProjectToDelete({ id, name });
+   151→   151→  };
+   152→   152→
+   153→   153→  const confirmDeleteProject = async () => {
+   154→   154→    if (!projectToDelete) return;
+   155→   155→    const { id } = projectToDelete;
+   156→   156→    setIsLoading(true);
+   157→   157→    setErrorMsg("");
+   158→   158→    setSuccessMsg("");
+   159→   159→    setProjectToDelete(null);
+   160→   160→
+   161→   161→    try {
+   162→   162→      const res = await fetch(`/api/projects/${id}`, {
+   163→   163→        method: "DELETE",
+   164→   164→        headers: { "x-user-email": userEmail }
+   165→   165→      });
+   166→   166→
+   167→   167→      if (!res.ok) throw new Error("Gagal menghapus galeri.");
+   168→   168→
+   169→   169→      setSuccessMsg("Galeri berhasil dihapus.");
+   170→   170→      onRefresh();
+   171→   171→      setTimeout(() => setSuccessMsg(""), 3000);
+   172→   172→    } catch (err: any) {
+   173→   173→      setErrorMsg(err.message || "Gagal menghapus.");
+   174→   174→    } finally {
+   175→   175→      setIsLoading(false);
+   176→   176→    }
+   177→   177→  };
+   178→   178→
+   179→   179→  const handleSyncDrive = async (projectId: string) => {
+   180→   180→    setSyncingId(projectId);
+   181→   181→    setErrorMsg("");
+   182→   182→    setSuccessMsg("");
+   183→   183→
+   184→   184→    try {
+   185→   185→      const res = await fetch(`/api/projects/${projectId}/sync`, {
+   186→   186→        method: "POST",
+   187→   187→        headers: {
+   188→   188→          "Authorization": `Bearer ${accessToken}`,
+   189→   189→          "x-user-email": userEmail
+   190→   190→        }
+   191→   191→      });
+   192→   192→
+   193→   193→      if (!res.ok) {
+   194→   194→        const err = await res.json();
+   195→   195→        throw new Error(err.error || "Ditolak dari Google Drive.");
+   196→   196→      }
+   197→   197→
+   198→   198→      const data = await res.json();
+   199→   199→      setSuccessMsg(`Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto dari Google Drive.`);
+   200→   200→      onRefresh();
+   201→   201→      
+   202→   202→      // Auto open synced gallery for viewing
+   203→   203→      setTimeout(() => {
+   204→   204→        setSuccessMsg("");
+   205→   205→        onSelectProject(projectId, false);
+   206→   206→      }, 3000);
+   207→   207→    } catch (err: any) {
+   208→   208→      console.error(err);
+   209→   209→      setErrorMsg(err.message || "Gagal terhubung dengan Drive. Pastikan folder tersebut shared \"Anyone with the link can view\" atau login Anda belum kedaluwarsa.");
+   210→   210→    } finally {
+   211→   211→      setSyncingId(null);
+   212→   212→    }
+   213→   213→  };
+   214→   214→
+   215→   215→  // Account additions/deletions Handlers
+   216→   216→  const handleAddAccount = async (e: React.FormEvent) => {
+   217→   217→    e.preventDefault();
+   218→   218→    if (!newEmail.trim()) {
+   219→   219→      setErrorMsg("Alamat email wajib diisi.");
+   220→   220→      return;
+   221→   221→    }
+   222→   222→
+   223→   223→    setIsLoading(true);
+   224→   224→    setErrorMsg("");
+   225→   225→    setSuccessMsg("");
+   226→   226→
+   227→   227→    try {
+   228→   228→      const res = await fetch("/api/accounts", {
+   229→   229→        method: "POST",
+   230→   230→        headers: {
+   231→   231→          "Content-Type": "application/json",
+   232→   232→          "x-user-email": userEmail
+   233→   233→        },
+   234→   234→        body: JSON.stringify({
+   235→   235→          email: newEmail.trim(),
+   236→   236→          displayName: newDisplayName.trim() || null,
+   237→   237→          role: newRole
+   238→   238→        })
+   239→   239→      });
+   240→   240→
+   241→   241→      if (!res.ok) {
+   242→   242→        const err = await res.json();
+   243→   243→        throw new Error(err.error || "Gagal mendaftarkan akun.");
+   244→   244→      }
+   245→   245→
+   246→   246→      setSuccessMsg(`Akun ${newEmail} sukses terdaftar sebagai ${newRole === "admin" ? "Admin" : "Manajer"}!`);
+   247→   247→      setNewEmail("");
+   248→   248→      setNewDisplayName("");
+   249→   249→      setNewRole("manager");
+   250→   250→      loadAccounts();
+   251→   251→
+   252→   252→      setTimeout(() => setSuccessMsg(""), 4000);
+   253→   253→    } catch (err: any) {
+   254→   254→      setErrorMsg(err.message || "Gagal mendaftarkan akun.");
+   255→   255→    } finally {
+   256→   256→      setIsLoading(false);
+   257→   257→    }
+   258→   258→  };
+   259→   259→
+   260→   260→  const handleDeleteAccount = (id: string, email: string) => {
+   261→   261→    setAccountToDelete({ id, email });
+   262→   262→  };
+   263→   263→
+   264→   264→  const confirmDeleteAccount = async () => {
+   265→   265→    if (!accountToDelete) return;
+   266→   266→    const { id, email } = accountToDelete;
+   267→   267→    setIsLoading(true);
+   268→   268→    setErrorMsg("");
+   269→   269→    setSuccessMsg("");
+   270→   270→    setAccountToDelete(null);
+   271→   271→
+   272→   272→    try {
+   273→   273→      const res = await fetch(`/api/accounts/${id}`, {
+   274→   274→        method: "DELETE",
+   275→   275→        headers: { "x-user-email": userEmail }
+   276→   276→      });
+   277→   277→
+   278→   278→      if (!res.ok) {
+   279→   279→        const err = await res.json();
+   280→   280→        throw new Error(err.error || "Gagal menghapus hak akses.");
+   281→   281→      }
+   282→   282→
+   283→   283→      setSuccessMsg(`Hak akses bagi akun ${email} berhasil dicabut.`);
+   284→   284→      loadAccounts();
+   285→   285→      setTimeout(() => setSuccessMsg(""), 4000);
+   286→   286→    } catch (err: any) {
+   287→   287→      setErrorMsg(err.message || "Gagal mencabut hak akses.");
+   288→   288→    } finally {
+   289→   289→      setIsLoading(false);
+   290→   290→    }
+   291→   291→  };
+   292→   292→
+   293→   293→  return (
+   294→   294→    <div id="admin-panel-container" className="space-y-6">
+   295→   295→      {/* Tab bar (only if admin) */}
+   296→   296→      {userRole === "admin" && (
+   297→   297→        <div id="admin-tab-bar" className="flex border-b border-[#D4AF37]/15 pb-2 ml-1 mb-2 space-x-6">
+   298→   298→          <button
+   299→   299→            type="button"
+   300→   300→            onClick={() => {
+   301→   301→              setActiveTab("projects");
+   302→   302→              setErrorMsg("");
+   303→   303→              setSuccessMsg("");
+   304→   304→            }}
+   305→   305→            className={`pb-2 px-1 text-xs uppercase tracking-wider font-extrabold flex items-center space-x-2 border-b-2 transition-all cursor-pointer ${
+   306→   306→              activeTab === "projects"
+   307→   307→                ? "text-[#D4AF37] border-[#D4AF37]"
+   308→   308→                : "text-slate-400 border-transparent hover:text-white"
+   309→   309→            }`}
+   310→   310→          >
+   311→   311→            <FolderKanban className="w-4 h-4 text-[#D4AF37]" />
+   312→   312→            <span>Kelola Galeri Kegiatan</span>
+   313→   313→          </button>
+   314→   314→          <button
+   315→   315→            type="button"
+   316→   316→            onClick={() => {
+   317→   317→              setActiveTab("accounts");
+   318→   318→              setErrorMsg("");
+   319→   319→              setSuccessMsg("");
+   320→   320→            }}
+   321→   321→            className={`pb-2 px-1 text-xs uppercase tracking-wider font-extrabold flex items-center space-x-2 border-b-2 transition-all cursor-pointer ${
+   322→   322→              activeTab === "accounts"
+   323→   323→                ? "text-[#D4AF37] border-[#D4AF37]"
+   324→   324→                : "text-slate-400 border-transparent hover:text-white"
+   325→   325→            }`}
+   326→   326→          >
+   327→   327→            <Users className="w-4 h-4 text-violet-400" />
+   328→   328→            <span>Manajemen Akun ({accounts.length ? accounts.length : "..."})</span>
+   329→   329→          </button>
+   330→   330→        </div>
+   331→   331→      )}
+   332→   332→
+   333→   333→      {/* Conditional Tabs render */}
+   334→   334→      {activeTab === "projects" ? (
+   335→   335→        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+   336→   336→          {/* Form Section */}
+   337→   337→          <div className="lg:col-span-1 bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl p-6 shadow-2xl relative backdrop-blur-sm self-start">
+   338→   338→            <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-[#D4AF37]/15">
+   339→   339→              <FolderKanban className="w-5 h-5 text-[#D4AF37]" />
+   340→   340→              <h2 className="text-md font-serif font-bold text-white">
+   341→   341→                {editingId ? "Ubah Pengaturan Galeri" : "Buat Galeri Baru"}
+   342→   342→              </h2>
+   343→   343→            </div>
+   344→   344→
+   345→   345→            {/* Status Alerts */}
+   346→   346→            {errorMsg && (
+   347→   347→              <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-350 rounded-lg text-xs mb-4">
+   348→   348→                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+   349→   349→                <span>{errorMsg}</span>
+   350→   350→              </div>
+   351→   351→            )}
+   352→   352→
+   353→   353→            {successMsg && (
+   354→   354→              <div className="flex items-start space-x-2 p-3 bg-emerald-500/15 border border-emerald-500/25 text-emerald-350 rounded-lg text-xs mb-4">
+   355→   355→                <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+   356→   356→                <span>{successMsg}</span>
+   357→   357→              </div>
+   358→   358→            )}
+   359→   359→
+   360→   360→            <form onSubmit={handleSubmit} className="space-y-4">
+   361→   361→              <div>
+   362→   362→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   363→   363→                  Nama Kegiatan
+   364→   364→                </label>
+   365→   365→                <input
+   366→   366→                  type="text"
+   367→   367→                  placeholder="Contoh: Taman Bunga Indah"
+   368→   368→                  value={name}
+   369→   369→                  onChange={(e) => setName(e.target.value)}
+   370→   370→                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
+   371→   371→                  required
+   372→   372→                />
+   373→   373→              </div>
+   374→   374→
+   375→   375→              <div>
+   376→   376→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   377→   377→                  Deskripsi Singkat
+   378→   378→                </label>
+   379→   379→                <textarea
+   380→   380→                  placeholder="Berikan info tentang lokasi ini untuk pengunjung..."
+   381→   381→                  value={description}
+   382→   382→                  onChange={(e) => setDescription(e.target.value)}
+   383→   383→                  rows={3}
+   384→   384→                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 resize-none transition-all"
+   385→   385→                />
+   386→   386→              </div>
+   387→   387→
+   388→   388→              <div>
+   389→   389→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5 flex items-center justify-between">
+   390→   390→                  <span>Link Folder Google Drive</span>
+   391→   391→                  <span className="group relative cursor-pointer">
+   392→   392→                    <HelpCircle className="w-3.5 h-3.5 text-[#D4AF37]" />
+   393→   393→                    <span className="absolute bottom-full right-0 w-64 bg-slate-950 text-[10px] text-slate-300 p-2.5 rounded-lg border border-[#D4AF37]/20 shadow-2xl opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all pointer-events-none z-50">
+   394→   394→                      Pergi ke Google Drive, klik kanan folder, pilih Bagikan &gt; Siapa saja yang memiliki link dapat melihat. Lalu salin link-nya dan tempel di sini.
+   395→   395→                    </span>
+   396→   396→                  </span>
+   397→   397→                </label>
+   398→   398→                <div className="relative">
+   399→   399→                  <input
+   400→   400→                    type="url"
+   401→   401→                    placeholder="https://drive.google.com/drive/folders/ID_FOLDER..."
+   402→   402→                    value={driveFolderUrl}
+   403→   403→                    onChange={(e) => setDriveFolderUrl(e.target.value)}
+   404→   404→                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
+   405→   405→                    required
+   406→   406→                  />
+   407→   407→                </div>
+   408→   408→                <p className="text-[10px] text-slate-400 mt-1 flex items-center space-x-1">
+   409→   409→                  <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+   410→   410→                  <span>Cukup salin-tempel tautan folder Drive publik Anda secara langsung.</span>
+   411→   411→                </p>
+   412→   412→              </div>
+   413→   413→
+   414→   414→              <div>
+   415→   415→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   416→   416→                  Bagaimana Foto Ditampilkan ke Umum?
+   417→   417→                </label>
+   418→   418→                <div className="grid grid-cols-2 gap-3">
+   419→   419→                  <button
+   420→   420→                    type="button"
+   421→   421→                    onClick={() => setDisplayMode("all")}
+   422→   422→                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+   423→   423→                      displayMode === "all"
+   424→   424→                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+   425→   425→                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+   426→   426→                    }`}
+   427→   427→                  >
+   428→   428→                    <div className="flex items-center space-x-1">
+   429→   429→                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
+   430→   430→                      <span>Semua Foto</span>
+   431→   431→                    </div>
+   432→   432→                    <span className="text-[9px] text-slate-300 text-center font-normal">Seketika tampil saat diklik</span>
+   433→   433→                  </button>
+   434→   434→
+   435→   435→                  <button
+   436→   436→                    type="button"
+   437→   437→                    onClick={() => setDisplayMode("search")}
+   438→   438→                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+   439→   439→                      displayMode === "search"
+   440→   440→                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+   441→   441→                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+   442→   442→                    }`}
+   443→   443→                  >
+   444→   444→                    <div className="flex items-center space-x-1">
+   445→   445→                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+   446→   446→                      <span>Hanya Pencarian</span>
+   447→   447→                    </div>
+   448→   448→                    <span className="text-[9px] text-slate-300 text-center font-normal">Wajib ketik nama untuk melihat</span>
+   449→   449→                  </button>
+   450→   450→                </div>
+   451→   451→              </div>
+   452→   452→
+   453→   453→              {/* Auto Sync Settings Section */}
+   454→   454→              <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
+   455→   455→                <div className="flex items-center justify-between mb-1">
+   456→   456→                  <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+   457→   457→                    Sinkron Otomatis
+   458→   458→                  </span>
+   459→   459→                  <label className="relative inline-flex items-center cursor-pointer select-none">
+   460→   460→                    <input 
+   461→   461→                      type="checkbox" 
+   462→   462→                      checked={autoSyncEnabled} 
+   463→   463→                      onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+   464→   464→                      className="sr-only peer" 
+   465→   465→                    />
+   466→   466→                    <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
+   467→   467→                    <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
+   468→   468→                      {autoSyncEnabled ? "AKTIF" : "NONAKTIF"}
+   469→   469→                    </span>
+   470→   470→                  </label>
+   471→   471→                </div>
+   472→   472→
+   473→   473→                {autoSyncEnabled && (
+   474→   474→                  <div className="space-y-1.5 animate-fadeIn">
+   475→   475→                    <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+   476→   476→                      Interval Waktu:
+   477→   477→                    </label>
+   478→   478→                    <select
+   479→   479→                      value={autoSyncInterval}
+   480→   480→                      onChange={(e) => setAutoSyncInterval(e.target.value as any)}
+   481→   481→                      className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
+   482→   482→                    >
+   483→   483→                      <option className="bg-[#120A21]" value="1m">Setiap 1 Menit</option>
+   484→   484→                      <option className="bg-[#120A21]" value="3m">Setiap 3 Menit</option>
+   485→   485→                      <option className="bg-[#120A21]" value="5m">Setiap 5 Menit</option>
+   486→   486→                      <option className="bg-[#120A21]" value="1h">Setiap 1 Jam</option>
+   487→   487→                      <option className="bg-[#120A21]" value="6h">Setiap 6 Jam</option>
+   488→   488→                    </select>
+   489→   489→                    <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+   490→   490→                      *Tautan sinkronisasi berjalan otomatis di background ketika browser Admin/Manajer terhubung.
+   491→   491→                    </p>
+   492→   492→                  </div>
+   493→   493→                )}
+   494→   494→              </div>
+   495→   495→
+   496→   496→              <div className="flex space-x-2 pt-2">
+   497→   497→                <button
+   498→   498→                  type="submit"
+   499→   499→                  disabled={isLoading}
+   500→   500→                  className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
+   501→   501→                >
+   502→   502→                  {isLoading ? "Memproses..." : editingId ? "Terapkan Perubahan" : "Deploy Gallery"}
+   503→   503→                </button>
+   504→   504→                {isEditing && (
+   505→   505→                  <button
+   506→   506→                    type="button"
+   507→   507→                    onClick={resetForm}
+   508→   508→                    className="py-2.5 px-3.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-xs transition-all"
+   509→   509→                  >
+   510→   510→                    Batal
+   511→   511→                  </button>
+   512→   512→                )}
+   513→   513→              </div>
+   514→   514→            </form>
+   515→   515→          </div>
+   516→   516→
+   517→   517→          {/* Grid of Projects */}
+   518→   518→          <div className="lg:col-span-2">
+   519→   519→            <div className="flex items-center justify-between mb-5 pb-3 border-b border-[#D4AF37]/15">
+   520→   520→              <div className="flex items-center space-x-2.5">
+   521→   521→                <Library className="w-5 h-5 text-[#D4AF37]" />
+   522→   522→                <h2 className="text-md font-serif font-bold text-white">Daftar Galeri di Server</h2>
+   523→   523→              </div>
+   524→   524→              <span className="text-xs bg-[#120A21] text-slate-350 border border-[#D4AF37]/30 py-1 px-3 rounded-full font-mono">
+   525→   525→                {projects.length} Total
+   526→   526→              </span>
+   527→   527→            </div>
+   528→   528→
+   529→   529→            {projects.length === 0 ? (
+   530→   530→              <div className="rounded-2xl border border-dashed border-[#D4AF37]/30 p-12 text-center bg-[#120A21]/40">
+   531→   531→                <FolderKanban className="w-12 h-12 text-[#D4AF37]/40 mx-auto mb-3" />
+   532→   532→                <p className="text-sm text-slate-400">Belum ada galeri yang terbuat. Buat galeri pertama Anda di panel kiri!</p>
+   533→   533→              </div>
+   534→   534→            ) : (
+   535→   535→              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+   536→   536→                {projects.map((project) => {
+   537→   537→                  const isSyncing = syncingId === project.id;
+   538→   538→                  const hasNoPhotos = project.photoCount === 0;
+   539→   539→
+   540→   540→                  return (
+   541→   541→                    <div
+   542→   542→                      key={project.id}
+   543→   543→                      className="bg-[#120A21] border border-violet-950/80 hover:border-[#D4AF37]/45 rounded-xl p-5 flex flex-col justify-between transition-all group hover:bg-[#1C0F32] shadow-xl"
+   544→   544→                    >
+   545→   545→                      <div>
+   546→   546→                        {/* Card Head */}
+   547→   547→                        <div className="flex justify-between items-start mb-2">
+   548→   548→                          <h3 className="font-serif text-sm font-bold text-white group-hover:text-[#D4AF37] transition-colors">
+   549→   549→                            {project.name}
+   550→   550→                          </h3>
+   551→   551→                          <span className={`text-[10px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-medium ${
+   552→   552→                            project.displayMode === "all"
+   553→   553→                              ? "bg-emerald-950/45 text-emerald-400 border-emerald-900/50"
+   554→   554→                              : "bg-amber-950/40 text-amber-400 border-amber-900/50"
+   555→   555→                          }`}>
+   556→   556→                            {project.displayMode === "all" ? (
+   557→   557→                              <>
+   558→   558→                                <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-400" />
+   559→   559→                                <span>Publik</span>
+   560→   560→                              </>
+   561→   561→                            ) : (
+   562→   562→                              <>
+   563→   563→                                <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-400" />
+   564→   564→                                <span>Pencarian</span>
+   565→   565→                              </>
+   566→   566→                            )}
+   567→   567→                          </span>
+   568→   568→                        </div>
+   569→   569→
+   570→   570→                        <p className="text-xs text-slate-350 line-clamp-2 mb-3 h-8">
+   571→   571→                          {project.description || "Tanpa deskripsi."}
+   572→   572→                        </p>
+   573→   573→
+   574→   574→                        <div className="space-y-1.5 list-none text-[11px] text-slate-350 border-t border-violet-950/60 py-3 mb-3">
+   575→   575→                          <div className="flex justify-between">
+   576→   576→                            <span className="text-slate-500">Jumlah Foto:</span>
+   577→   577→                            <span className={`font-mono font-bold ${hasNoPhotos ? "text-amber-400" : "text-[#D4AF37]"}`}>
+   578→   578→                              {project.photoCount} foto
+   579→   579→                            </span>
+   580→   580→                          </div>
+   581→   581→                          <div className="flex justify-between">
+   582→   582→                            <span className="text-slate-500">Dibuat Pada:</span>
+   583→   583→                            <span className="font-mono text-slate-300">{project.createdAt}</span>
+   584→   584→                          </div>
+   585→   585→                          <div className="flex items-center justify-between font-medium">
+   586→   586→                            <span className="text-slate-500">Google Drive:</span>
+   587→   587→                            <a
+   588→   588→                              href={project.driveFolderUrl}
+   589→   589→                              target="_blank"
+   590→   590→                              rel="noreferrer"
+   591→   591→                              className="text-[#D4AF37] hover:underline inline-flex items-center space-x-0.5"
+   592→   592→                            >
+   593→   593→                              <span className="truncate max-w-[80px]">Buka Link</span>
+   594→   594→                              <ExternalLink className="w-2.5 h-2.5" />
+   595→   595→                            </a>
+   596→   596→                          </div>
+   597→   597→                          <div className="flex items-center justify-between border-t border-violet-950/35 pt-1.5 mt-1.5">
+   598→   598→                            <span className="text-slate-500 flex items-center space-x-1">
+   599→   599→                              <RefreshCw className={`w-3 h-3 ${project.autoSyncEnabled ? "animate-spin text-[#D4AF37]" : "text-slate-500"}`} />
+   600→   600→                              <span>Sinkron Otomatis:</span>
+   601→   601→                            </span>
+   602→   602→                            <span className={`font-mono font-bold text-[10px] ${project.autoSyncEnabled ? "text-[#D4AF37]" : "text-slate-550"}`}>
+   603→   603→                              {project.autoSyncEnabled ? (
+   604→   604→                                `Aktif (${project.autoSyncInterval === "1m" ? "1 Menit" : project.autoSyncInterval === "3m" ? "3 Menit" : project.autoSyncInterval === "5m" ? "5 Menit" : project.autoSyncInterval === "1h" ? "1 Jam" : "6 Jam"})`
+   605→   605→                              ) : (
+   606→   606→                                "Mati"
+   607→   607→                              )}
+   608→   608→                            </span>
+   609→   609→                          </div>
+   610→   610→                        </div>
+   611→   611→                      </div>
+   612→   612→
+   613→   613→                      {/* Operational Controls */}
+   614→   614→                      <div className="flex items-center justify-between border-t border-violet-950/50 pt-3 gap-2">
+   615→   615→                        <button
+   616→   616→                          onClick={() => handleSyncDrive(project.id)}
+   617→   617→                          disabled={isSyncing}
+   618→   618→                          className="flex-1 select-none flex items-center justify-center space-x-1 py-1.5 px-3 rounded-lg text-xs bg-[#4C2A85] border border-[#D4AF37]/35 hover:bg-[#5a329d] hover:border-[#D4AF37] text-white disabled:opacity-50 transition-all font-bold scale-[0.98] active:scale-[0.94] shadow-md shadow-black/25"
+   619→   619→                          title="Sinkronisasi otomatis dengan Google Drive"
+   620→   620→                        >
+   621→   621→                          <RefreshCw className={`w-3.5 h-3.5 mr-0.5 ${isSyncing ? "animate-spin text-[#D4AF37]" : ""}`} />
+   622→   622→                          <span>{isSyncing ? "Menyinkron..." : "Sinkron Drive"}</span>
+   623→   623→                        </button>
+   624→   624→
+   625→   625→                        <div className="flex items-center space-x-1.5">
+   626→   626→                          <button
+   627→   627→                            type="button"
+   628→   628→                            onClick={(e) => {
+   629→   629→                              e.preventDefault();
+   630→   630→                              e.stopPropagation();
+   631→   631→                              if (onShare) onShare(project);
+   632→   632→                            }}
+   633→   633→                            disabled={isSyncing}
+   634→   634→                            className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-[#D4AF37] hover:text-white hover:bg-[#4C2A85]/20 transition-all font-semibold cursor-pointer"
+   635→   635→                            title="Bagikan galeri (Salin Link & QR Code)"
+   636→   636→                          >
+   637→   637→                            <Share2 className="w-3.5 h-3.5" />
+   638→   638→                          </button>
+   639→   639→                          <button
+   640→   640→                            type="button"
+   641→   641→                            onClick={(e) => {
+   642→   642→                              e.preventDefault();
+   643→   643→                              e.stopPropagation();
+   644→   644→                              handleEditClick(project);
+   645→   645→                            }}
+   646→   646→                            disabled={isSyncing}
+   647→   647→                            className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-white hover:bg-[#4C2A85]/20 transition-all cursor-pointer"
+   648→   648→                            title="Ubah galeri"
+   649→   649→                          >
+   650→   650→                            <Edit2 className="w-3.5 h-3.5" />
+   651→   651→                          </button>
+   652→   652→                          <button
+   653→   653→                            type="button"
+   654→   654→                            onClick={(e) => {
+   655→   655→                              e.preventDefault();
+   656→   656→                              e.stopPropagation();
+   657→   657→                              handleDelete(project.id, project.name);
+   658→   658→                            }}
+   659→   659→                            disabled={isSyncing}
+   660→   660→                            className="p-1.5 rounded-lg border border-violet-950 hover:border-red-600/50 text-slate-400 hover:text-red-400 hover:bg-red-500/5 transition-all cursor-pointer"
+   661→   661→                            title="Hapus galeri"
+   662→   662→                          >
+   663→   663→                            <Trash2 className="w-3.5 h-3.5" />
+   664→   664→                          </button>
+   665→   665→                        </div>
+   666→   666→                      </div>
+   667→   667→
+   668→   668→                      {/* Warning if no photos synced */}
+   669→   669→                      {hasNoPhotos && !isSyncing && (
+   670→   670→                        <div className="mt-2 text-[10px] bg-amber-500/5 border border-amber-500/10 text-amber-400/80 p-1.5 rounded text-center font-semibold">
+   671→   671→                          ⚠ Belum disinkron. Klik &quot;Sinkron Drive&quot; agar foto tampil!
+   672→   672→                        </div>
+   673→   673→                      )}
+   674→   674→                    </div>
+   675→   675→                  );
+   676→   676→                })}
+   677→   677→              </div>
+   678→   678→            )}
+   679→   679→          </div>
+   680→   680→        </div>
+   681→   681→      ) : (
+   682→   682→        /* Accounts Management Tab view */
+   683→   683→        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+   684→   684→          {/* Add Account Form Section */}
+   685→   685→          <div className="lg:col-span-1 bg-[#120A21] border border-violet-900/40 rounded-2xl p-6 shadow-2xl relative backdrop-blur-sm self-start">
+   686→   686→            <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-violet-900/30">
+   687→   687→              <UserPlus className="w-5 h-5 text-[#D4AF37]" />
+   688→   688→              <h2 className="text-md font-serif font-bold text-white">Daftarkan Akun Baru</h2>
+   689→   689→            </div>
+   690→   690→
+   691→   691→            {errorMsg && (
+   692→   692→              <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-350 rounded-lg text-xs mb-4">
+   693→   693→                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+   694→   694→                <span>{errorMsg}</span>
+   695→   695→              </div>
+   696→   696→            )}
+   697→   697→
+   698→   698→            {successMsg && (
+   699→   699→              <div className="flex items-start space-x-2 p-3 bg-emerald-500/15 border border-emerald-500/25 text-emerald-350 rounded-lg text-xs mb-4">
+   700→   700→                <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+   701→   701→                <span>{successMsg}</span>
+   702→   702→              </div>
+   703→   703→            )}
+   704→   704→
+   705→   705→            <form onSubmit={handleAddAccount} className="space-y-4">
+   706→   706→              <div>
+   707→   707→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   708→   708→                  Alamat Email Google
+   709→   709→                </label>
+   710→   710→                <input
+   711→   711→                  type="email"
+   712→   712→                  placeholder="Contoh: manager@gmail.com"
+   713→   713→                  value={newEmail}
+   714→   714→                  onChange={(e) => setNewEmail(e.target.value)}
+   715→   715→                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-500 transition-all font-mono"
+   716→   716→                  required
+   717→   717→                />
+   718→   718→              </div>
+   719→   719→
+   720→   720→              <div>
+   721→   721→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   722→   722→                  Nama Lengkap / Jabatan (Opsional)
+   723→   723→                </label>
+   724→   724→                <input
+   725→   725→                  type="text"
+   726→   726→                  placeholder="Contoh: Budi (Manajer Kegiatan)"
+   727→   727→                  value={newDisplayName}
+   728→   728→                  onChange={(e) => setNewDisplayName(e.target.value)}
+   729→   729→                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-500 transition-all"
+   730→   730→                />
+   731→   731→              </div>
+   732→   732→
+   733→   733→              <div>
+   734→   734→                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+   735→   735→                  Peran / Izin Hak Akses
+   736→   736→                </label>
+   737→   737→                <div className="grid grid-cols-2 gap-3">
+   738→   738→                  <button
+   739→   739→                    type="button"
+   740→   740→                    onClick={() => setNewRole("manager")}
+   741→   741→                    className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+   742→   742→                      newRole === "manager"
+   743→   743→                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+   744→   744→                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+   745→   745→                    }`}
+   746→   746→                  >
+   747→   747→                    <div className="flex items-center space-x-1">
+   748→   748→                      <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+   749→   749→                      <span>Manajer</span>
+   750→   750→                    </div>
+   751→   751→                    <span className="text-[9px] text-slate-300 text-center font-normal">Buat & Share Galeri</span>
+   752→   752→                  </button>
+   753→   753→
+   754→   754→                  <button
+   755→   755→                    type="button"
+   756→   756→                    onClick={() => setNewRole("admin")}
+   757→   757→                    className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+   758→   758→                      newRole === "admin"
+   759→   759→                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+   760→   760→                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+   761→   761→                    }`}
+   762→   762→                  >
+   763→   763→                    <div className="flex items-center space-x-1">
+   764→   764→                      <Shield className="w-3.5 h-3.5 text-amber-400" />
+   765→   765→                      <span>Admin</span>
+   766→   766→                    </div>
+   767→   767→                    <span className="text-[9px] text-slate-300 text-center font-normal">Semua + Kelola Akun</span>
+   768→   768→                  </button>
+   769→   769→                </div>
+   770→   770→              </div>
+   771→   771→
+   772→   772→              <div className="pt-2">
+   773→   773→                <button
+   774→   774→                  type="submit"
+   775→   775→                  disabled={isLoading}
+   776→   776→                  className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
+   777→   777→                >
+   778→   778→                  {isLoading ? "Mengirim..." : "Daftarkan Akun"}
+   779→   779→                </button>
+   780→   780→              </div>
+   781→   781→            </form>
+   782→   782→          </div>
+   783→   783→
+   784→   784→          {/* Registered Users List Section */}
+   785→   785→          <div className="lg:col-span-2 bg-[#120A21]/30 border border-violet-900/20 rounded-2xl p-6 shadow-2xl backdrop-blur-sm self-start">
+   786→   786→            <div className="flex items-center justify-between mb-5 pb-3 border-b border-violet-900/35">
+   787→   787→              <div className="flex items-center space-x-2.5">
+   788→   788→                <Users className="w-5 h-5 text-[#D4AF37]" />
+   789→   789→                <h2 className="text-md font-serif font-bold text-white">Daftar Akun Pengelola Aktif</h2>
+   790→   790→              </div>
+   791→   791→              <span className="text-xs bg-violet-950/50 text-[#D4AF37] border border-[#D4AF37]/40 py-1 px-3 rounded-full font-mono">
+   792→   792→                {accounts.length} Akun
+   793→   793→              </span>
+   794→   794→            </div>
+   795→   795→
+   796→   796→            {loadingAccounts ? (
+   797→   797→              <div className="flex flex-col items-center justify-center py-12">
+   798→   798→                <RefreshCw className="w-6 h-6 text-violet-400 animate-spin mb-2" />
+   799→   799→                <span className="text-xs text-slate-400 font-mono">Mengunduh daftar akun...</span>
+   800→   800→              </div>
+   801→   801→            ) : accounts.length === 0 ? (
+   802→   802→              <div className="text-center py-8">
+   803→   803→                <p className="text-xs text-slate-400">Belum ada akun pengelola yang terdaftar.</p>
+   804→   804→              </div>
+   805→   805→            ) : (
+   806→   806→              <div className="overflow-x-auto w-full">
+   807→   807→                <table className="w-full text-left text-xs text-slate-300">
+   808→   808→                  <thead>
+   809→   809→                    <tr className="border-b border-violet-950 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+   810→   810→                      <th className="py-3 px-2">Pengguna</th>
+   811→   811→                      <th className="py-3 px-2">Peran</th>
+   812→   812→                      <th className="py-3 px-2">Terdaftar Sejak</th>
+   813→   813→                      <th className="py-3 px-2 text-right">Aksi</th>
+   814→   814→                    </tr>
+   815→   815→                  </thead>
+   816→   816→                  <tbody className="divide-y divide-violet-950/50">
+   817→   817→                    {accounts.map((acc) => {
+   818→   818→                      const isOwnAccount = acc.email.toLowerCase() === userEmail.toLowerCase();
+   819→   819→                      const isPrimaryAdmin = acc.email.toLowerCase() === "synclicen@gmail.com";
+   820→   820→
+   821→   821→                      return (
+   822→   822→                        <tr key={acc.id} className="hover:bg-violet-950/25 transition-colors">
+   823→   823→                          <td className="py-3 px-2">
+   824→   824→                            <div className="font-semibold text-white">{acc.displayName || "Tanpa Nama"}</div>
+   825→   825→                            <div className="text-[11px] text-slate-400 font-mono">{acc.email}</div>
+   826→   826→                          </td>
+   827→   827→                          <td className="py-3 px-2">
+   828→   828→                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+   829→   829→                              acc.role === "admin"
+   830→   830→                                ? "bg-amber-950/40 text-amber-400 border-amber-900/50"
+   831→   831→                                : "bg-indigo-950/40 text-indigo-300 border-indigo-900/50"
+   832→   832→                            }`}>
+   833→   833→                              {acc.role === "admin" ? "ADMIN" : "MANAJER"}
+   834→   834→                            </span>
+   835→   835→                          </td>
+   836→   836→                          <td className="py-3 px-2 font-mono text-slate-400 text-[11px]">
+   837→   837→                            {acc.addedAt || "2026-05-28"}
+   838→   838→                          </td>
+   839→   839→                          <td className="py-3 px-2 text-right">
+   840→   840→                            {isOwnAccount ? (
+   841→   841→                              <span className="text-[10px] text-slate-500 font-semibold px-2">Akun Anda</span>
+   842→   842→                            ) : isPrimaryAdmin ? (
+   843→   843→                              <span className="text-[10px] text-[#D4AF37]/50 font-semibold px-2">Utama</span>
+   844→   844→                            ) : (
+   845→   845→                              <button
+   846→   846→                                type="button"
+   847→   847→                                onClick={() => handleDeleteAccount(acc.id, acc.email)}
+   848→   848→                                className="p-1.5 rounded-lg border border-violet-950 hover:border-red-650 text-slate-400 hover:text-red-400 hover:bg-red-500/5 transition-all cursor-pointer inline-flex items-center"
+   849→   849→                                title="Hapus Akun"
+   850→   850→                              >
+   851→   851→                                <Trash className="w-3.5 h-3.5" />
+   852→   852→                              </button>
+   853→   853→                            )}
+   854→   854→                          </td>
+   855→   855→                        </tr>
+   856→   856→                      );
+   857→   857→                    })}
+   858→   858→                  </tbody>
+   859→   859→                </table>
+   860→   860→              </div>
+   861→   861→            )}
+   862→   862→          </div>
+   863→   863→        </div>
+   864→   864→      )}
+   865→   865→
+   866→   866→      {/* Confirmation Modal for Project Deletion */}
+   867→   867→      {projectToDelete && (
+   868→   868→        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+   869→   869→          <div className="bg-[#120A21] border-2 border-red-500/40 rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl relative space-y-5 animate-in fade-in zoom-in duration-200">
+   870→   870→            <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500 text-red-500 flex items-center justify-center mx-auto mb-2 animate-bounce">
+   871→   871→              <AlertCircle className="w-6 h-6" />
+   872→   872→            </div>
+   873→   873→            <div className="text-center space-y-2">
+   874→   874→              <h3 className="text-lg font-serif font-bold text-white">Yakin Hapus Galeri ini?</h3>
+   875→   875→              <p className="text-xs text-slate-350 leading-relaxed">
+   876→   876→                Anda akan menghapus galeri <span className="font-bold text-[#D4AF37]">&quot;{projectToDelete.name}&quot;</span> secara permanen. Seluruh foto yang tersinkronasi di halaman ini juga akan terhapus dari metadata LIHUM server.
+   877→   877→              </p>
+   878→   878→              <p className="text-[10px] text-red-400 font-semibold uppercase tracking-wider">
+   879→   879→                Tindakan ini tidak dapat dibatalkan!
+   880→   880→              </p>
+   881→   881→            </div>
+   882→   882→            <div className="flex space-x-3 pt-2">
+   883→   883→              <button
+   884→   884→                type="button"
+   885→   885→                onClick={() => setProjectToDelete(null)}
+   886→   886→                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
+   887→   887→              >
+   888→   888→                Batal
+   889→   889→              </button>
+   890→   890→              <button
+   891→   891→                type="button"
+   892→   892→                onClick={confirmDeleteProject}
+   893→   893→                className="flex-1 py-2.5 rounded-xl bg-red-650/80 hover:bg-red-600 text-white text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer shadow-lg hover:shadow-red-500/20 active:scale-95 border border-red-500/30"
+   894→   894→              >
+   895→   895→                Ya, Hapus Galeri
+   896→   896→              </button>
+   897→   897→            </div>
+   898→   898→          </div>
+   899→   899→        </div>
+   900→   900→      )}
+   901→   901→
+   902→   902→      {/* Confirmation Modal for Account Access Revocation */}
+   903→   903→      {accountToDelete && (
+   904→   904→        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+   905→   905→          <div className="bg-[#120A21] border-2 border-red-500/40 rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl relative space-y-5 animate-in fade-in zoom-in duration-200">
+   906→   906→            <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500 text-red-500 flex items-center justify-center mx-auto mb-2 animate-bounce">
+   907→   907→              <AlertCircle className="w-6 h-6" />
+   908→   908→            </div>
+   909→   909→            <div className="text-center space-y-2">
+   910→   910→              <h3 className="text-lg font-serif font-bold text-white">Cabut Hak Akses?</h3>
+   911→   911→              <p className="text-xs text-slate-350 leading-relaxed">
+   912→   912→                Apakah Anda yakin ingin mencabut seluruh hak akses pengelolaan bagi email <span className="font-mono text-[#D4AF37]">&quot;{accountToDelete.email}&quot;</span>? Akun ini tidak akan dapat berpindah ke dashboard pengelola setelah ini.
+   913→   913→              </p>
+   914→   914→            </div>
+   915→   915→            <div className="flex space-x-3 pt-2">
+   916→   916→              <button
+   917→   917→                type="button"
+   918→   918→                onClick={() => setAccountToDelete(null)}
+   919→   919→                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
+   920→   920→              >
+   921→   921→                Batal
+   922→   922→              </button>
+   923→   923→              <button
+   924→   924→                type="button"
+   925→   925→                onClick={confirmDeleteAccount}
+   926→   926→                className="flex-1 py-2.5 rounded-xl bg-red-650/80 hover:bg-red-600 text-white text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer shadow-lg hover:shadow-red-500/20 active:scale-95 border border-red-500/30"
+   927→   927→              >
+   928→   928→                Cabut Izin
+   929→   929→              </button>
+   930→   930→            </div>
+   931→   931→          </div>
+   932→   932→        </div>
+   933→   933→      )}
+   934→   934→    </div>
+   935→   935→  );
+   936→   936→}
+   937→   937→
