@@ -130,3 +130,43 @@ Stage Summary:
   (A) Add CLOUDFLARE_ACCOUNT_ID as a GitHub secret (find it at dash.cloudflare.com — it's the hex string in the URL after login), then re-run the workflow, OR
   (B) Use Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git → select LIHUM repo (simpler, no account_id needed — dashboard handles it).
 - The GitHub Actions workflow is ready: once CLOUDFLARE_ACCOUNT_ID is added, every push to main auto-deploys to Cloudflare Workers + sets TURSO_AUTH_TOKEN as a Worker secret.
+
+---
+Task ID: 4
+Agent: main (Z.ai Code)
+Task: Complete the Cloudflare deployment after user updated token permissions. Deploy the worker, set all secrets, and verify auto-deploy via GitHub Actions.
+
+Work Log:
+- Re-verified the updated Cloudflare token: now works with /accounts endpoint. Discovered account_id = d8a5b04ca8fc4894e0541c83899f8d97 (account name: "Synclicen@gmail.com's Account"). wrangler whoami now succeeds.
+- Deployed worker via `wrangler deploy` (build output already in .open-next/ from earlier). Worker "lihum" deployed to https://lihum.synclicen.workers.dev (Version ID: d0d0086b). Bindings: ASSETS + DATABASE_URL + APP_URL.
+- Set TURSO_AUTH_TOKEN as Worker secret via `wrangler secret put`.
+- Set CLOUDFLARE_ACCOUNT_ID as GitHub secret via API (libsodium sealed-box encryption). All 4 GitHub secrets now set: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, TURSO_AUTH_TOKEN, DATABASE_URL.
+- First production test FAILED: all DB-backed API routes returned HTTP 500. wrangler tail revealed: "LibsqlError: SERVER_ERROR: Server returned HTTP status 401". The user-provided TURSO_AUTH_TOKEN was invalid for the lihum database (Turso: "invalid JWT token: can't be decoded with any of the existing keys").
+- Created a NEW Turso token specifically for the lihum database via Turso Platform API (POST /v1/organizations/enigmatic-aquarius-tehb9z/databases/lihum/auth/tokens). New token verified working via direct curl to the libSQL HTTP pipeline API (SELECT COUNT(*) returned 200).
+- Updated Worker secret TURSO_AUTH_TOKEN with the new token. Updated GitHub secret TURSO_AUTH_TOKEN with the new token (for future CI auto-deploys).
+- Re-tested all production endpoints — ALL PASS:
+  * Home page: HTTP 200 (13354 bytes)
+  * /api/projects: 2 projects from Turso
+  * /api/projects/lumina-asgard: 6 photos loaded
+  * /api/projects/secret-vault?search=Marble: matched "White Asgard Marble Palace.jpg"
+  * /api/accounts/me (synclicen): role=admin
+  * /api/config: appUrl=https://lihum.synclicen.workers.dev
+  * /api/photo-proxy?id=sample-lumina-1: 307 redirect to Unsplash
+- Verified UI via Agent Browser + VLM on production URL:
+  * Home page: LIHUM header, hero banner, 2 gallery cards, footer — all correct, 0 console errors.
+  * Gallery view (?gallery=lumina-asgard): 6 photo thumbnails loading with actual images, search box, "6 Total Foto" status, no broken images.
+- Updated wrangler.jsonc: set APP_URL to "https://lihum.synclicen.workers.dev". Re-deployed (Version ID: ea7340f6).
+- Committed and pushed wrangler.jsonc change to GitHub (commit f207d85) to trigger the auto-deploy workflow.
+- GitHub Actions workflow run #3: completed/success ✅. Job log confirms:
+  * `bunx wrangler deploy` → "Uploaded lihum" → "Deployed lihum triggers" → https://lihum.synclicen.workers.dev
+  * `wrangler secret put TURSO_AUTH_TOKEN` → "Success! Uploaded secret TURSO_AUTH_TOKEN"
+- Post-auto-deploy verification: all endpoints still return correct data (Home 200, /api/projects 2 projects, /api/projects/lumina-asgard 6 photos, /api/accounts/me role=admin, /api/config appUrl correct).
+
+Stage Summary:
+- ✅ PRODUCTION LIVE at https://lihum.synclicen.workers.dev
+- ✅ Turso DB: libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io (new auth token created and deployed)
+- ✅ GitHub repo: https://github.com/synclicen/LIHUM (commit f207d85 on main)
+- ✅ GitHub Actions: auto-deploy workflow passes (4 secrets configured: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, TURSO_AUTH_TOKEN, DATABASE_URL)
+- ✅ Cloudflare Worker: "lihum" deployed with bindings (ASSETS, DATABASE_URL var, APP_URL var) + TURSO_AUTH_TOKEN secret
+- ✅ Full pipeline verified: git push → GitHub Actions → OpenNext build → wrangler deploy → Cloudflare Workers → Turso DB
+- Remaining manual step for user: add "lihum.synclicen.workers.dev" to Firebase Console → Authentication → Settings → Authorized domains (so Google OAuth login works in production).
