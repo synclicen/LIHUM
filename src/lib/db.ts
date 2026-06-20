@@ -8,8 +8,8 @@ import { createClient, type Client } from "@libsql/client";
  *  - Turso (cloud):        DATABASE_URL="libsql://<db>.turso.io" + TURSO_AUTH_TOKEN
  *  - Cloudflare Workers:   same Turso URL + token (HTTP transport, no native binding needed)
  *
- * On Cloudflare Workers the client uses the pure-JS HTTP transport automatically,
- * so there is no query engine or native binary to bundle.
+ * The client is created LAZILY (on first DB access) so that `next build` can
+ * evaluate the module without needing DATABASE_URL set at build time.
  */
 
 const globalForDb = globalThis as unknown as { __lihumDb?: Client };
@@ -25,8 +25,26 @@ function createDb(): Client {
   return createClient({ url, authToken });
 }
 
-export const db: Client = globalForDb.__lihumDb ?? createDb();
-if (process.env.NODE_ENV !== "production") globalForDb.__lihumDb = db;
+/** Returns the cached client, creating it on first call (lazy). */
+function getDb(): Client {
+  if (globalForDb.__lihumDb) return globalForDb.__lihumDb;
+  const client = createDb();
+  globalForDb.__lihumDb = client;
+  return client;
+}
+
+/**
+ * Lazy proxy — `createDb()` is only invoked on first property access,
+ * not at module load. This lets `next build` import the module without
+ * DATABASE_URL being set (build-time prerendering won't trigger DB calls).
+ */
+export const db: Client = new Proxy({} as Client, {
+  get(_target, prop, receiver) {
+    const client = getDb();
+    const value = Reflect.get(client, prop, receiver);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
 
 let schemaPromise: Promise<void> | null = null;
 
