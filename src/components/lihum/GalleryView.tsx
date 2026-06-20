@@ -223,8 +223,8 @@ export default function GalleryView({
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={
                     isSearchMode
-                      ? "Ketik kata kunci / NIM (Wajib)..."
-                      : "Cari foto atau NIM..."
+                      ? "Ketik Nama atau ID (Wajib)..."
+                      : "Ketik Nama atau ID..."
                   }
                   className="w-full h-10 pl-9 pr-9 rounded-lg bg-white border-none shadow-md text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-sans"
                 />
@@ -289,7 +289,7 @@ export default function GalleryView({
                 </p>
                 {debouncedQuery && (
                   <p className="text-[11px] text-slate-500 mt-1">
-                    Coba gunakan kata kunci nama atau NIM lain.
+                    Coba gunakan kata kunci Nama atau ID lain.
                   </p>
                 )}
               </div>
