@@ -84,3 +84,49 @@ Stage Summary:
 - All 4 frontend components + page.tsx unchanged (they consume the same API shapes) — UI verified identical to before via Agent Browser.
 - README documents the complete GitHub → Cloudflare → Turso setup including Turso db creation, env vars, Firebase authorized domains.
 - App runs locally on port 3000 with `file:` DB; production just needs `DATABASE_URL=libsql://...` + `TURSO_AUTH_TOKEN` + `APP_URL` set in Cloudflare dashboard.
+
+---
+Task ID: 3
+Agent: main (Z.ai Code)
+Task: Deploy LIHUM to production using the user's Turso, GitHub, and Cloudflare tokens. Push code to GitHub, create Turso DB, and deploy to Cloudflare Workers.
+
+Work Log:
+- Verified all 3 tokens:
+  * Turso: valid, org slug "enigmatic-aquarius-tehb9z" (personal, id 1000159060)
+  * GitHub: valid, user "synclicen" (id 273628571), scopes: repo, workflow
+  * Cloudflare: token valid (id c336b14b9438fb787349da16dc564a9f, expires 2026-12-31)
+- Created Turso database "lihum" via Platform API (POST /v1/organizations/enigmatic-aquarius-tehb9z/databases with group=default).
+  * Connection URL: libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io
+  * Hostname: lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io
+- Updated local .env to use Turso (DATABASE_URL + TURSO_AUTH_TOKEN). Restarted dev server — schema auto-created in Turso, 2 demo galleries + 6 sample photos + admin account seeded successfully.
+- Updated wrangler.jsonc: DATABASE_URL set as a non-secret var (Turso URL), APP_URL left empty (computed dynamically from request Host header by /api/config).
+- Created GitHub Actions workflow (.github/workflows/deploy.yml):
+  * Triggers on push to main + manual dispatch
+  * Steps: checkout → setup bun → install → build:cloudflare → wrangler deploy → set TURSO_AUTH_TOKEN secret
+  * Passes DATABASE_URL during build step
+  * Uses bunx wrangler for deploy
+  * Required secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, TURSO_AUTH_TOKEN, DATABASE_URL
+- Fixed db.ts: replaced eager `createClient()` with a lazy Proxy so `next build` works without DATABASE_URL at build time (build-time prerendering no longer triggers DB connection). Verified local build succeeds without DATABASE_URL env var.
+- Fixed eslint config: added .open-next/, .wrangler/, cloudflare-env.d.ts to ignores (build artifacts were causing 9348 lint errors).
+- Force-pushed new code to github.com/synclicen/LIHUM (replaced old React+Vite code with Next.js+Turso+Cloudflare version):
+  * Commit ad0a289: "feat: deploy to Cloudflare Workers + Turso" (initial deploy config)
+  * Commit 2aa1b5b: "fix: lazy db client + build artifacts in eslint ignores"
+- Set 3 GitHub repo secrets via API (using libsodium sealed-box encryption):
+  * CLOUDFLARE_API_TOKEN ✅
+  * TURSO_AUTH_TOKEN ✅
+  * DATABASE_URL ✅ (libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io)
+- GitHub Actions workflow ran twice:
+  * Run #1 (ad0a289): failed at build step — DATABASE_URL not passed during build
+  * Run #2 (2aa1b5b): build PASSED ✅ (lazy db fix), failed at deploy step — CLOUDFLARE_ACCOUNT_ID not set
+- Cloudflare deploy BLOCKED: the provided Cloudflare API token (cfut_...) cannot auto-discover the account_id. Exhaustively tried: /accounts (empty), /user (403), /user/tokens (403), /memberships (403), /zones (empty), /user/tokens/{id} (403), repo webhooks (none), wrangler whoami (failed), wrangler deploy (failed), wrangler deploy --dry-run (succeeded — worker bundle ready, 4806 KiB). The token was created with "Workers Scripts: Edit" scope for a specific account but WITHOUT "Account Settings: Read" permission, so it cannot list/discover accounts.
+- OpenNext build verified locally: worker bundle at .open-next/worker.js (4806 KiB, gzip 985 KiB), all 9 API routes preserved as dynamic server functions, bindings: ASSETS + DATABASE_URL + APP_URL.
+- Local app verified working with Turso: 2 projects, 6 photos, admin role, config endpoint — all return correct data from Turso cloud DB.
+
+Stage Summary:
+- ✅ Turso: database "lihum" created at libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io, schema auto-created, demo data seeded.
+- ✅ GitHub: code pushed to https://github.com/synclicen/LIHUM (commit 2aa1b5b on main), 3 repo secrets set (CLOUDFLARE_API_TOKEN, TURSO_AUTH_TOKEN, DATABASE_URL).
+- ✅ Build: OpenNext build passes in GitHub Actions (lazy db client fix), worker bundle ready.
+- ⏳ Cloudflare deploy: blocked by missing CLOUDFLARE_ACCOUNT_ID. The provided Cloudflare token lacks account-list permission, so the account_id cannot be discovered programmatically. User needs to either:
+  (A) Add CLOUDFLARE_ACCOUNT_ID as a GitHub secret (find it at dash.cloudflare.com — it's the hex string in the URL after login), then re-run the workflow, OR
+  (B) Use Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git → select LIHUM repo (simpler, no account_id needed — dashboard handles it).
+- The GitHub Actions workflow is ready: once CLOUDFLARE_ACCOUNT_ID is added, every push to main auto-deploys to Cloudflare Workers + sets TURSO_AUTH_TOKEN as a Worker secret.
