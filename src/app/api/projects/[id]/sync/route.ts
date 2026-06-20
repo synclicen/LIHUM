@@ -7,8 +7,106 @@ import {
   type NewPhotoInput,
 } from "@/lib/queries";
 
+/**
+ * Recursively lists all images in a Google Drive folder and its subfolders.
+ *
+ * Uses Breadth-First Search (BFS) to traverse the folder tree so that
+ * shallow photos appear first. For each image found, we also record the
+ * name of its immediate parent folder so we can prefix the stored name —
+ * this lets the manager identify which petugas/subfolder each photo came
+ * from and prevents confusion when different subfolders contain files
+ * with the same name (e.g. "IMG_001.jpg" from two different officers).
+ *
+ * Safety limits prevent runaway scanning on pathological trees.
+ *
+ * @param token     Google OAuth Bearer token (drive.readonly scope)
+ * @param rootFolderId  The Drive folder ID the manager provided
+ * @returns array of { file, parentName } where parentName is "" for
+ *          photos directly inside rootFolderId.
+ */
+async function listImagesRecursively(
+  token: string,
+  rootFolderId: string
+): Promise<{ file: any; parentName: string; foldersScanned: number; maxDepthReached: number }> {
+  const results: { file: any; parentName: string }[] = [];
+  const visited = new Set<string>([rootFolderId]);
+  // Queue of folders to scan: { id, parentName, depth }
+  // parentName is the NAME of this folder's immediate parent (for prefixing photos).
+  const queue: { id: string; parentName: string; depth: number }[] = [
+    { id: rootFolderId, parentName: "", depth: 0 },
+  ];
+
+  const MAX_DEPTH = 15; // plenty for any real-world folder structure
+  const MAX_FOLDERS = 1000; // safety cap to prevent runaway scans
+  let foldersScanned = 0;
+  let maxDepthReached = 0;
+
+  while (queue.length > 0) {
+    if (foldersScanned >= MAX_FOLDERS) {
+      console.warn(`[Sync] Reached MAX_FOLDERS (${MAX_FOLDERS}), stopping traversal.`);
+      break;
+    }
+
+    const { id, parentName, depth } = queue.shift()!;
+    foldersScanned++;
+    if (depth > maxDepthReached) maxDepthReached = depth;
+
+    // List items in this folder, handling Drive API pagination.
+    let pageToken: string | undefined = undefined;
+    do {
+      const q = `'${id}' in parents and trashed = false`;
+      const fields =
+        "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, size)";
+      let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        q
+      )}&fields=${encodeURIComponent(fields)}&pageSize=1000`;
+      if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (err) {
+        console.error(`[Sync] Network error scanning folder ${id}:`, err);
+        break; // skip this folder, continue with the rest of the queue
+      }
+
+      if (!response.ok) {
+        // Folder might not be shared with this account — skip it gracefully.
+        const errorText = await response.text();
+        console.warn(
+          `[Sync] Skipping folder ${id} (HTTP ${response.status}): ${errorText.slice(0, 200)}`
+        );
+        break;
+      }
+
+      const data: any = await response.json();
+      const files: any[] = data.files || [];
+
+      for (const file of files) {
+        if (file.mimeType === "application/vnd.google-apps.folder") {
+          // Subfolder — queue it for scanning (respecting depth + visited guards)
+          if (depth + 1 <= MAX_DEPTH && !visited.has(file.id)) {
+            visited.add(file.id);
+            queue.push({ id: file.id, parentName: file.name, depth: depth + 1 });
+          }
+        } else if (file.mimeType && file.mimeType.startsWith("image/")) {
+          // Image file — collect it. parentName is the folder it lives in.
+          results.push({ file, parentName });
+        }
+      }
+
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+  }
+
+  return { file: results, parentName: "", foldersScanned, maxDepthReached } as any;
+}
+
 // POST /api/projects/:id/sync — Admin/Manager only.
-// Pulls image metadata from a Google Drive folder using the user's Bearer token.
+// Pulls image metadata from a Google Drive folder AND all its subfolders
+// using the signed-in manager's Bearer token.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -50,26 +148,21 @@ export async function POST(
   }
 
   try {
-    const q = `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`;
-    const fields =
-      "files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, size)";
-    const driveUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-      q
-    )}&fields=${encodeURIComponent(fields)}&pageSize=300`;
+    // Recursively scan the root folder + all subfolders.
+    const scanResult = await listImagesRecursively(token, folderId);
+    const scanned: { file: any; parentName: string }[] = (scanResult as any).file;
+    const foldersScanned: number = (scanResult as any).foldersScanned;
+    const maxDepthReached: number = (scanResult as any).maxDepthReached;
 
-    const driveResponse = await fetch(driveUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
+      // Prefix photos from subfolders with the subfolder name so the
+      // manager can tell which petugas/subfolder each photo came from.
+      // Photos directly in the root folder keep their original name.
+      // We use " — " (em-dash) as separator because it's filename-safe.
+      const displayName = parentName
+        ? `${parentName} — ${file.name}`
+        : file.name;
 
-    if (!driveResponse.ok) {
-      const errorText = await driveResponse.text();
-      throw new Error(`Google Drive API response error: ${errorText}`);
-    }
-
-    const driveData: any = await driveResponse.json();
-    const files = driveData.files || [];
-
-    const mappedPhotos: NewPhotoInput[] = files.map((file: any) => {
       let sizeFormatted = "Unknown";
       if (file.size) {
         const bytes = parseInt(file.size);
@@ -81,7 +174,7 @@ export async function POST(
       }
       return {
         id: file.id,
-        name: file.name,
+        name: displayName,
         mimeType: file.mimeType,
         thumbnailLink: file.thumbnailLink || "",
         webContentLink: file.webContentLink || "",
@@ -99,6 +192,8 @@ export async function POST(
     return NextResponse.json({
       success: true,
       photoCount: mappedPhotos.length,
+      foldersScanned,
+      maxDepthReached,
       photos: mappedPhotos,
       lastSyncedAt,
     });

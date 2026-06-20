@@ -230,8 +230,12 @@ export default function AdminPanel({
       }
 
       const data = await res.json();
+      const folderInfo =
+        data.foldersScanned && data.foldersScanned > 1
+          ? ` dari ${data.foldersScanned} folder (termasuk subfolder)`
+          : "";
       setSuccessMsg(
-        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto dari Google Drive.`
+        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo} dari Google Drive.`
       );
       onRefresh();
 
@@ -438,10 +442,15 @@ export default function AdminPanel({
                   <span>Link Folder Google Drive</span>
                   <span className="group relative cursor-pointer">
                     <HelpCircle className="w-3.5 h-3.5 text-[#D4AF37]" />
-                    <span className="absolute bottom-full right-0 w-64 bg-slate-950 text-[10px] text-slate-300 p-2.5 rounded-lg border border-[#D4AF37]/20 shadow-2xl opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all pointer-events-none z-50">
+                    <span className="absolute bottom-full right-0 w-72 bg-slate-950 text-[10px] text-slate-300 p-2.5 rounded-lg border border-[#D4AF37]/20 shadow-2xl opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all pointer-events-none z-50">
                       Pergi ke Google Drive, klik kanan folder, pilih Bagikan
                       &gt; Siapa saja yang memiliki link dapat melihat. Lalu
-                      salin link-nya dan tempel di sini.
+                      salin link-nya dan tempel di sini.{" "}
+                      <strong className="text-[#D4AF37]">
+                        Semua subfolder di dalamnya akan otomatis ikut terscan
+                      </strong>{" "}
+                      — cocok untuk hasil foto yang sudah dikelompokkan per
+                      petugas.
                     </span>
                   </span>
                 </label>
@@ -458,8 +467,10 @@ export default function AdminPanel({
                 <p className="text-[10px] text-slate-400 mt-1 flex items-center space-x-1">
                   <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
                   <span>
-                    Cukup salin-tempel tautan folder Drive publik Anda secara
-                    langsung.
+                    Salin-tempel tautan folder Drive publik Anda.{" "}
+                    <strong className="text-[#D4AF37]/80">
+                      Subfolder di dalamnya ikut terscan otomatis.
+                    </strong>
                   </span>
                 </p>
               </div>
