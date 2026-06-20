@@ -1,7 +1,17 @@
-import { db } from "@/lib/db";
+import { ensureSchema } from "@/lib/db";
+import {
+  countProjects,
+  countAccounts,
+  createProject,
+  addProjectPhotos,
+  createAccounts,
+  type NewProjectInput,
+  type NewPhotoInput,
+  type NewAccountInput,
+} from "@/lib/queries";
 
 // Beautiful initial mock photos curated for Purple Haze, Gold and White theme
-export const SAMPLE_PHOTOS_LUMINA = [
+export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
   {
     id: "sample-lumina-1",
     name: "Cottage Garden Sanctuary.jpg",
@@ -70,7 +80,7 @@ export const SAMPLE_PHOTOS_LUMINA = [
   },
 ];
 
-const DEFAULT_PROJECTS = [
+const DEFAULT_PROJECTS: NewProjectInput[] = [
   {
     id: "lumina-asgard",
     name: "Lumina Place Gallery Demo",
@@ -79,6 +89,8 @@ const DEFAULT_PROJECTS = [
     driveFolderUrl: "https://drive.google.com/drive/folders/1z8P2p_placeholder_folder_id",
     driveFolderId: "1z8P2p_placeholder_folder_id",
     displayMode: "all",
+    autoSyncEnabled: false,
+    autoSyncInterval: "3m",
     createdAt: "2026-05-27",
   },
   {
@@ -89,11 +101,13 @@ const DEFAULT_PROJECTS = [
     driveFolderUrl: "https://drive.google.com/drive/folders/2z9Q3q_placeholder_folder_id",
     driveFolderId: "2z9Q3q_placeholder_folder_id",
     displayMode: "search",
+    autoSyncEnabled: false,
+    autoSyncInterval: "3m",
     createdAt: "2026-05-28",
   },
 ];
 
-const DEFAULT_ACCOUNTS = [
+const DEFAULT_ACCOUNTS: NewAccountInput[] = [
   {
     id: "admin-seed",
     email: "synclicen@gmail.com",
@@ -103,38 +117,37 @@ const DEFAULT_ACCOUNTS = [
   },
 ];
 
-let seedingPromise: Promise<void> | null = null;
+let seedPromise: Promise<void> | null = null;
 
-// Idempotent seed: deduplicates concurrent calls and only inserts when DB is empty.
-export async function ensureSeed() {
-  if (seedingPromise) return seedingPromise;
-  seedingPromise = (async () => {
-    const projectCount = await db.project.count();
-    if (projectCount === 0) {
+/**
+ * Idempotently creates the schema and seeds default galleries + admin account.
+ * Safe to call on every request — only inserts when tables are empty.
+ * Concurrent calls are deduplicated.
+ */
+export async function ensureSeed(): Promise<void> {
+  if (seedPromise) return seedPromise;
+  seedPromise = (async () => {
+    await ensureSchema();
+
+    if ((await countProjects()) === 0) {
       for (const p of DEFAULT_PROJECTS) {
-        await db.project.create({
-          data: {
-            ...p,
-            autoSyncEnabled: false,
-            autoSyncInterval: "3m",
-            lastSyncedAt: "",
-            photoCount: SAMPLE_PHOTOS_LUMINA.length,
-            photos: {
-              create: SAMPLE_PHOTOS_LUMINA.map((ph) => ({ ...ph })),
-            },
-          },
-        });
+        await createProject(p);
+        await addProjectPhotos(p.id, SAMPLE_PHOTOS_LUMINA);
+        // keep photoCount in sync on the Project row
+        const { updateProjectSync } = await import("@/lib/queries");
+        await updateProjectSync(p.id, SAMPLE_PHOTOS_LUMINA.length, "");
       }
     }
 
-    const accountCount = await db.account.count();
-    if (accountCount === 0) {
-      await db.account.createMany({ data: DEFAULT_ACCOUNTS });
+    if ((await countAccounts()) === 0) {
+      await createAccounts(DEFAULT_ACCOUNTS);
     }
   })();
   try {
-    await seedingPromise;
+    await seedPromise;
   } finally {
-    seedingPromise = null;
+    seedPromise = null;
   }
 }
+
+export { ensureSchema };

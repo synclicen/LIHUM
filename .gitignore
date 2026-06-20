@@ -32,10 +32,21 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
 
+# cloudflare / opennext
+.open-next/
+.wrangler/
+cloudflare-env.d.ts
+
+# local turso/sqlite database
+/db/*.db
+/db/*.db-journal
+/db/*.db-wal
+/db/*.db-shm
 
 # typescript
 *.tsbuildinfo

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { ensureSeed, getAccountRole } from "@/lib/lihum";
+import { findAccountById, deleteAccount } from "@/lib/queries";
 
 // DELETE /api/accounts/:id — Admin only
 export async function DELETE(
@@ -18,7 +18,7 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const acc = await db.account.findUnique({ where: { id } });
+  const acc = await findAccountById(id);
   if (!acc) {
     return NextResponse.json({ error: "Akun tidak ditemukan." }, { status: 404 });
   }
@@ -37,6 +37,6 @@ export async function DELETE(
     );
   }
 
-  await db.account.delete({ where: { id } });
+  await deleteAccount(id);
   return NextResponse.json({ success: true });
 }

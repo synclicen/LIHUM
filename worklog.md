@@ -37,3 +37,50 @@ Stage Summary:
 - Data: Prisma schema with Project, Photo (composite PK), Account models; auto-seeds 2 demo galleries + 6 sample photos + admin account on first request.
 - All core user flows verified working in the browser: gallery browsing, search (both modes), photo lightbox, share modal with QR, download proxy, admin panel (UI rendered; live Google OAuth requires real Google credentials).
 - Dev server runs stably on port 3000 via the detached launcher script.
+
+---
+Task ID: 2
+Agent: main (Z.ai Code)
+Task: Migrate the LIHUM app's environment to GitHub + Cloudflare + Turso — replace Prisma + local SQLite with Turso (libSQL via @libsql/client) and add Cloudflare Workers deployment config (OpenNext) so the app deploys via git push → Cloudflare auto-build → Turso.
+
+Work Log:
+- Installed `@libsql/client` (Turso/libSQL client, Workers-native, no query engine).
+- Tested `@libsql/client` local file mode in the sandbox — confirmed it works with `file:/abs/path.db` URLs.
+- Rewrote `src/lib/db.ts`: creates a libSQL client from `DATABASE_URL` + `TURSO_AUTH_TOKEN` (works identically for local file: URLs, Turso libsql:// URLs, and Cloudflare Workers HTTP transport). Added `ensureSchema()` that idempotently creates the 3 tables (Project, Photo with composite PK (projectId,id), Account) + index via `CREATE TABLE IF NOT EXISTS` — no migration CLI needed.
+- Created `src/lib/queries.ts`: typed data-access layer with row mappers (ProjectRow/PhotoRow/AccountRow → API types). All CRUD operations as raw SQL: countProjects, getAllProjectSummaries, findProjectById, getProjectWithPhotos, createProject, updateProject, deleteProject, updateProjectSync, replaceProjectPhotos (atomic batch), findPhotoById, addProjectPhotos, countAccounts, getAllAccounts, findAccountByEmail, findAccountById, createAccount, deleteAccount, createAccounts.
+- Rewrote `src/lib/seed.ts` to use the new query layer (same 2 demo galleries + 6 sample photos + synclicen admin). `ensureSeed()` is now idempotent with a deduplicating promise.
+- Rewrote `src/lib/lihum.ts` helpers (getAccountRole, ensurePrimaryAdmin, parseDriveFolderId, slugify, emailToId) to use queries instead of Prisma.
+- Rewrote all 9 API route files (config, accounts GET/POST, accounts/me, accounts/[id] DELETE, projects GET/POST, projects/[id] GET/PUT/DELETE, projects/[id]/sync, photo-proxy, photo-proxy/download) to import from `@/lib/queries` and `@/lib/lihum` instead of Prisma.
+- Removed Prisma entirely: deleted `prisma/schema.prisma`, ran `bun remove prisma @prisma/client`, deleted the old `db/custom.db` file.
+- Updated `package.json`: name → "lihum", removed all `db:*` Prisma scripts, added `build:cloudflare`, `deploy`, `preview:cloudflare`, `cf-typegen` scripts.
+- Installed `@opennextjs/cloudflare` (v1.19.11) + `wrangler` (v4.103.0) as dev deps.
+- Created `wrangler.jsonc` (Cloudflare Workers config: main=.open-next/worker.js, nodejs_compat flag, assets binding, APP_URL var).
+- Created `open-next.config.ts` (default OpenNext Cloudflare config).
+- Updated `next.config.ts` to opt into OpenNext dev patches only when `CF_DEV=1` (so sandbox `next dev` runs as plain Node).
+- Created `.env.example` documenting DATABASE_URL (file: for local, libsql:// for Turso), TURSO_AUTH_TOKEN, APP_URL.
+- Updated `.gitignore` to exclude `.open-next/`, `.wrangler/`, `cloudflare-env.d.ts`, `db/*.db*`, and to keep `.env.example` tracked.
+- Wrote a comprehensive `README.md` with: tech stack table, local dev instructions, full GitHub→Cloudflare→Turso deployment guide (Turso db create, git push, Cloudflare Pages git-connect with build settings + env vars, CLI deploy alternative, Firebase authorized domains).
+- Restarted dev server via the detached launcher script. Verified all 9 endpoints work with the new libSQL stack:
+  * /api/projects → 2 galleries seeded (lumina-asgard all-mode 6 photos, secret-vault search-mode 6 photos)
+  * /api/projects/secret-vault (no search) → 0 photos (locked)
+  * /api/projects/secret-vault?search=Marble → matches "White Asgard Marble Palace"
+  * /api/projects/lumina-asgard → 6 photos
+  * /api/accounts/me as synclicen → admin role
+  * /api/accounts as admin → account list; as nobody → 403
+  * /api/photo-proxy?id=sample-lumina-1 → 307 redirect to Unsplash
+  * /api/config → appUrl
+- Ran `bun run lint` — fixed one `no-require-imports` error in next.config.ts (switched to static import) — now 0 errors, 0 warnings.
+- Verified with Agent Browser + VLM:
+  * Home page: LIHUM header, hero banner, both gallery cards, footer — all correct, 0 console errors.
+  * Gallery view (lumina-asgard): 6 photos load (no broken images), gold download buttons, search box, "Server / All Mode / 6 Total Foto" status.
+  * Search-mode (secret-vault): typing "Marble" reveals the matching photo with image visible.
+  * All dev.log entries show 200/307 responses, no errors.
+- Verified `opennextjs-cloudflare` (1.19.11) and `wrangler` (4.103.0) CLIs are installed and versioned correctly.
+
+Stage Summary:
+- Database migrated: Prisma + local SQLite → Turso (libSQL) via `@libsql/client`. No ORM, no migration CLI — schema auto-creates with `CREATE TABLE IF NOT EXISTS` on first request. Same code runs on Node.js (local file: URL) and Cloudflare Workers (HTTP transport to Turso).
+- Cloudflare deployment enabled: `wrangler.jsonc` + `open-next.config.ts` + `@opennextjs/cloudflare`. Deploy commands: `bun run build:cloudflare` (build) and `bun run deploy` (build + deploy). Also supports Cloudflare Pages git-integration (connect GitHub repo, auto-deploy on push).
+- Prisma fully removed (schema.prisma deleted, packages uninstalled, all 15+ query call sites rewritten to raw SQL via the typed queries layer).
+- All 4 frontend components + page.tsx unchanged (they consume the same API shapes) — UI verified identical to before via Agent Browser.
+- README documents the complete GitHub → Cloudflare → Turso setup including Turso db creation, env vars, Firebase authorized domains.
+- App runs locally on port 3000 with `file:` DB; production just needs `DATABASE_URL=libsql://...` + `TURSO_AUTH_TOKEN` + `APP_URL` set in Cloudflare dashboard.

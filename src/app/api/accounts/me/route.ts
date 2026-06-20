@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { ensureSeed, ensurePrimaryAdmin } from "@/lib/lihum";
+import { findAccountByEmail } from "@/lib/queries";
 
 // GET /api/accounts/me
 export async function GET(req: NextRequest) {
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     await ensurePrimaryAdmin(emailLower);
   }
 
-  const acc = await db.account.findUnique({ where: { email: emailLower } });
+  const acc = await findAccountByEmail(emailLower);
   if (acc) {
     return NextResponse.json({
       email: acc.email,

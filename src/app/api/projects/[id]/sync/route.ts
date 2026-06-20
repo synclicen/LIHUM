@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { ensureSeed, getAccountRole } from "@/lib/lihum";
+import {
+  findProjectById,
+  replaceProjectPhotos,
+  updateProjectSync,
+  type NewPhotoInput,
+} from "@/lib/queries";
 
 // POST /api/projects/:id/sync — Admin/Manager only.
 // Pulls image metadata from a Google Drive folder using the user's Bearer token.
@@ -31,7 +36,7 @@ export async function POST(
   }
   const token = authHeader.split(" ")[1];
 
-  const project = await db.project.findUnique({ where: { id } });
+  const project = await findProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
@@ -64,7 +69,7 @@ export async function POST(
     const driveData: any = await driveResponse.json();
     const files = driveData.files || [];
 
-    const mappedPhotos = files.map((file: any) => {
+    const mappedPhotos: NewPhotoInput[] = files.map((file: any) => {
       let sizeFormatted = "Unknown";
       if (file.size) {
         const bytes = parseInt(file.size);
@@ -87,17 +92,9 @@ export async function POST(
 
     const lastSyncedAt = new Date().toISOString();
 
-    // Replace all photos atomically
-    await db.$transaction([
-      db.photo.deleteMany({ where: { projectId: id } }),
-      db.photo.createMany({
-        data: mappedPhotos.map((p: any) => ({ ...p, projectId: id })),
-      }),
-      db.project.update({
-        where: { id },
-        data: { photoCount: mappedPhotos.length, lastSyncedAt },
-      }),
-    ]);
+    // Replace photos + update counts in one go.
+    await replaceProjectPhotos(id, mappedPhotos);
+    await updateProjectSync(id, mappedPhotos.length, lastSyncedAt);
 
     return NextResponse.json({
       success: true,

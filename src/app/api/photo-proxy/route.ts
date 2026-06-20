@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { ensureSeed } from "@/lib/lihum";
+import { findPhotoById } from "@/lib/queries";
 
 // GET /api/photo-proxy?id=FILE_ID&size=full|thumb
 // High-reliability image proxy that bypasses CORS / auth barriers.
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   // Sample mock photo → redirect to its Unsplash thumbnail
   if (fileId.startsWith("sample-")) {
-    const sample = await db.photo.findFirst({ where: { id: fileId } });
+    const sample = await findPhotoById(fileId);
     if (sample && sample.thumbnailLink) {
       return NextResponse.redirect(sample.thumbnailLink);
     }

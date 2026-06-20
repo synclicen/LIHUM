@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { ensureSeed } from "@/lib/lihum";
+import { findPhotoById } from "@/lib/queries";
 
 // GET /api/photo-proxy/download?id=FILE_ID&name=FILENAME
 // Streams the original file with Content-Disposition: attachment.
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (fileId.startsWith("sample-")) {
-    const sample = await db.photo.findFirst({ where: { id: fileId } });
+    const sample = await findPhotoById(fileId);
     if (sample && sample.webContentLink) {
       try {
         const response = await fetch(sample.webContentLink);
