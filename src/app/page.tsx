@@ -555,17 +555,33 @@ export default function App() {
 
       {/* Luxury Footer */}
       <footer
-        className={`bg-[#120A21] border-t border-[#D4AF37]/20 text-center text-xs text-slate-400 font-mono shrink-0 ${
-          selectedProjectId ? "py-4 text-[10px]" : "py-8"
+        className={`bg-[#120A21] border-t border-[#D4AF37]/20 text-center shrink-0 ${
+          selectedProjectId ? "py-4" : "py-8"
         }`}
       >
-        <p>&copy; 2026 LIHUM: Lihat, Unduh Mandiri!</p>
+        {/* Baris 1 — sans-serif, emas, dengan copyright */}
         <p
-          className={`text-[#D4AF37]/85 mt-0.5 ${
+          className={`font-sans font-semibold tracking-wide text-[#D4AF37] ${
+            selectedProjectId ? "text-[10px]" : "text-xs"
+          }`}
+        >
+          &copy; 2026 &middot; Made by Fajrianor
+        </p>
+        {/* Baris 2 — serif (Playfair Display), putih, judul */}
+        <p
+          className={`font-serif font-bold tracking-wide text-white mt-1 ${
+            selectedProjectId ? "text-[11px]" : "text-sm"
+          }`}
+        >
+          LIHUM: Lihat, Unduh Mandiri!
+        </p>
+        {/* Baris 3 — mono (JetBrains Mono), slate, institusi */}
+        <p
+          className={`font-mono tracking-wider text-slate-400 mt-1 ${
             selectedProjectId ? "text-[9px]" : "text-[10px]"
           }`}
         >
-          Made by Fajrianor - Pusat Humas dan Keterbukaan Informasi 2026.
+          Pusat Humas dan Keterbukaan Informasi &middot; UIN Antasari Banjarmasin
         </p>
       </footer>
 
