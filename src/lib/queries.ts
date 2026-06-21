@@ -16,6 +16,7 @@ export interface ProjectRow {
   displayMode: string;
   visibility: string; // "public" | "private"
   password: string; // "salt:hash" or "" for public galleries
+  isHidden: number; // 0 | 1
   autoSyncEnabled: number; // 0 | 1
   autoSyncInterval: string;
   lastSyncedAt: string;
@@ -52,6 +53,7 @@ export interface NewProjectInput {
   displayMode: "all" | "search";
   visibility: "public" | "private";
   password: string; // pre-hashed "salt:hash" or "" for public
+  isHidden: boolean;
   autoSyncEnabled: boolean;
   autoSyncInterval: string;
   createdAt: string;
@@ -65,6 +67,7 @@ export interface UpdateProjectInput {
   displayMode?: "all" | "search";
   visibility?: "public" | "private";
   password?: string; // pre-hashed "salt:hash" or "" to clear
+  isHidden?: boolean;
   autoSyncEnabled?: boolean;
   autoSyncInterval?: string;
   lastSyncedAt?: string;
@@ -99,6 +102,7 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   displayMode: String(r.displayMode ?? "all"),
   visibility: String(r.visibility ?? "public"),
   password: String(r.password ?? ""),
+  isHidden: Number(r.isHidden ?? 0),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
@@ -130,9 +134,18 @@ export async function countProjects(): Promise<number> {
 }
 
 export async function getAllProjectSummaries(): Promise<ProjectRow[]> {
+  // Admin view — returns ALL projects including hidden ones.
   // photoCount is stored on the Project row itself (kept in sync by sync route),
   // so a single SELECT is enough — no JOIN needed.
   const r = await db.execute("SELECT * FROM Project ORDER BY createdAt ASC");
+  return r.rows.map((row) => asProject(row as Record<string, unknown>));
+}
+
+export async function getVisibleProjectSummaries(): Promise<ProjectRow[]> {
+  // Public home page — excludes hidden galleries.
+  const r = await db.execute(
+    "SELECT * FROM Project WHERE isHidden = 0 ORDER BY createdAt ASC"
+  );
   return r.rows.map((row) => asProject(row as Record<string, unknown>));
 }
 
@@ -159,8 +172,8 @@ export async function getProjectWithPhotos(
 
 export async function createProject(input: NewProjectInput): Promise<ProjectRow> {
   await db.execute({
-    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, visibility, password, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, visibility, password, isHidden, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       input.id,
       input.name,
@@ -170,6 +183,7 @@ export async function createProject(input: NewProjectInput): Promise<ProjectRow>
       input.displayMode,
       input.visibility,
       input.password,
+      input.isHidden ? 1 : 0,
       input.autoSyncEnabled ? 1 : 0,
       input.autoSyncInterval,
       "",
@@ -196,6 +210,12 @@ export async function updateProject(
     displayMode: input.displayMode ?? existing.displayMode,
     visibility: input.visibility ?? existing.visibility,
     password: input.password !== undefined ? input.password : existing.password,
+    isHidden:
+      input.isHidden !== undefined
+        ? input.isHidden
+          ? 1
+          : 0
+        : existing.isHidden,
     autoSyncEnabled:
       input.autoSyncEnabled !== undefined
         ? input.autoSyncEnabled
@@ -207,7 +227,7 @@ export async function updateProject(
   };
 
   await db.execute({
-    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, visibility=?, password=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
+    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, visibility=?, password=?, isHidden=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
     args: [
       merged.name,
       merged.description,
@@ -216,6 +236,7 @@ export async function updateProject(
       merged.displayMode,
       merged.visibility,
       merged.password,
+      merged.isHidden,
       merged.autoSyncEnabled,
       merged.autoSyncInterval,
       merged.lastSyncedAt,

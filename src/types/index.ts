@@ -16,6 +16,7 @@ export interface Project {
   driveFolderId: string;
   displayMode: "all" | "search";
   visibility: "public" | "private";
+  isHidden?: boolean;
   photos: Photo[];
   photoCount: number;
   createdAt: string;
@@ -36,6 +37,7 @@ export interface ProjectSummary {
   driveFolderId: string;
   displayMode: "all" | "search";
   visibility: "public" | "private";
+  isHidden?: boolean;
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;

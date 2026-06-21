@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSeed, getAccountRole, parseDriveFolderId, slugify, hashPassword } from "@/lib/lihum";
 import {
   getAllProjectSummaries,
+  getVisibleProjectSummaries,
   findProjectById,
   createProject,
   toBool,
@@ -17,6 +18,7 @@ function summaryOut(p: ProjectRow) {
     driveFolderId: p.driveFolderId,
     displayMode: p.displayMode as "all" | "search",
     visibility: p.visibility as "public" | "private",
+    isHidden: toBool(p.isHidden),
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -25,10 +27,17 @@ function summaryOut(p: ProjectRow) {
   };
 }
 
-// GET /api/projects — lightweight summaries (photoCount stored on Project row)
-export async function GET() {
+// GET /api/projects — lightweight summaries.
+// Admins/managers see ALL galleries (including hidden ones, for management).
+// Public visitors only see non-hidden galleries.
+export async function GET(req: NextRequest) {
   await ensureSeed();
-  const projects = await getAllProjectSummaries();
+  const userEmail = req.headers.get("x-user-email") || undefined;
+  const role = await getAccountRole(userEmail);
+  const projects =
+    role !== null
+      ? await getAllProjectSummaries() // admin/manager: see all
+      : await getVisibleProjectSummaries(); // public: exclude hidden
   return NextResponse.json(projects.map(summaryOut));
 }
 
@@ -102,6 +111,7 @@ export async function POST(req: NextRequest) {
     displayMode: displayMode || "all",
     visibility: vis,
     password: hashedPassword,
+    isHidden: false, // new galleries are visible by default
     autoSyncEnabled: autoSyncEnabled === true,
     autoSyncInterval: autoSyncInterval || "3m",
     createdAt: new Date().toISOString().split("T")[0],

@@ -22,6 +22,8 @@ import {
   UserPlus,
   Shield,
   Trash,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -69,6 +71,7 @@ export default function AdminPanel({
 
   const [isLoading, setIsLoading] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [togglingHideId, setTogglingHideId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -260,6 +263,39 @@ export default function AdminPanel({
       );
     } finally {
       setSyncingId(null);
+    }
+  };
+
+  // Toggle gallery visibility (hide/show from public home page)
+  const handleToggleHide = async (project: ProjectSummary) => {
+    setTogglingHideId(project.id);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({ isHidden: !project.isHidden }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Gagal mengubah visibilitas galeri.");
+      }
+      setSuccessMsg(
+        project.isHidden
+          ? `Galeri "${project.name}" sekarang tampil kembali di halaman publik.`
+          : `Galeri "${project.name}" disembunyikan dari halaman publik.`
+      );
+      onRefresh();
+      setTimeout(() => setSuccessMsg(""), 3500);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "Gagal mengubah visibilitas galeri.");
+    } finally {
+      setTogglingHideId(null);
     }
   };
 
@@ -705,6 +741,7 @@ export default function AdminPanel({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {projects.map((project) => {
                   const isSyncing = syncingId === project.id;
+                  const isTogglingHide = togglingHideId === project.id;
                   const hasNoPhotos = project.photoCount === 0;
 
                   return (
@@ -742,6 +779,12 @@ export default function AdminPanel({
                               <span className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-medium bg-red-950/40 text-red-400 border-red-900/50">
                                 <Lock className="w-2.5 h-2.5 mr-0.5" />
                                 <span>Privat</span>
+                              </span>
+                            )}
+                            {project.isHidden && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-medium bg-slate-950/60 text-slate-400 border-slate-700/50">
+                                <EyeOff className="w-2.5 h-2.5 mr-0.5" />
+                                <span>Tersembunyi</span>
                               </span>
                             )}
                           </div>
@@ -839,6 +882,33 @@ export default function AdminPanel({
                         </button>
 
                         <div className="flex items-center space-x-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleToggleHide(project);
+                            }}
+                            disabled={isSyncing || isTogglingHide}
+                            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                              project.isHidden
+                                ? "border-violet-950 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5"
+                                : "border-violet-950 hover:border-slate-500 text-slate-400 hover:text-slate-200 hover:bg-slate-500/10"
+                            }`}
+                            title={
+                              project.isHidden
+                                ? "Tampilkan galeri di halaman publik"
+                                : "Sembunyikan galeri dari halaman publik"
+                            }
+                          >
+                            {isTogglingHide ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : project.isHidden ? (
+                              <Eye className="w-3.5 h-3.5" />
+                            ) : (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                           <button
                             type="button"
                             onClick={(e) => {

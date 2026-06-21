@@ -116,6 +116,7 @@ export async function ensureSchema(): Promise<void> {
     // Migrations: add new columns to existing Project table (idempotent).
     await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
     await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
+    await ensureColumn("Project", "isHidden", "INTEGER NOT NULL DEFAULT 0");
   })();
   try {
     await schemaPromise;
