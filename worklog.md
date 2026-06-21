@@ -170,3 +170,63 @@ Stage Summary:
 - ✅ Cloudflare Worker: "lihum" deployed with bindings (ASSETS, DATABASE_URL var, APP_URL var) + TURSO_AUTH_TOKEN secret
 - ✅ Full pipeline verified: git push → GitHub Actions → OpenNext build → wrangler deploy → Cloudflare Workers → Turso DB
 - Remaining manual step for user: add "lihum.synclicen.workers.dev" to Firebase Console → Authentication → Settings → Authorized domains (so Google OAuth login works in production).
+
+---
+Task ID: 5
+Agent: main (Z.ai Code)
+Task: Add public/private gallery option with password protection. Private galleries appear on the gallery list but require a password to open. Admin can set the password when creating/editing.
+
+Work Log:
+- Analyzed user's screenshot of the "Buat Galeri Baru" form to understand current layout.
+- DB schema migration: added `visibility` (TEXT, default 'public') and `password` (TEXT, default '') columns to Project table. Used `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` for idempotent migration that works on existing databases.
+- Created `src/lib/password.ts`: password hashing via Web Crypto API (SHA-256 + 16-byte random salt). Stored as "salt:hash" format. Works identically on Node.js and Cloudflare Workers.
+- Updated `src/lib/lihum.ts`: re-exports hashPassword, generateSalt, verifyPassword from password.ts (avoids circular imports with seed.ts).
+- Updated types: added `visibility` to Project + ProjectSummary, added `requiresPassword` + `passwordError` to Project (for client-side password prompt state).
+- Updated queries.ts: added visibility + password to ProjectRow, NewProjectInput, UpdateProjectInput, asProject mapper, createProject, updateProject. Password field is never included in API response objects (projectOut/summaryOut explicitly exclude it).
+- Updated seed.ts: added visibility:"public" + password:"" to existing demo galleries (backward compatible).
+- Updated API routes:
+  * POST /api/projects: accepts visibility + password, validates (private requires password ≥3 chars), hashes before storing.
+  * PUT /api/projects/[id]: accepts visibility + password updates. When switching to private, requires new password if none exists. When switching to public, clears password. When editing existing private, empty password = keep existing.
+  * GET /api/projects/[id]: for private galleries, verifies password query param. Without/incorrect password → returns project metadata + requiresPassword:true + empty photos. Correct password → returns photos normally. Admin/manager bypass via x-user-email header.
+- Updated AdminPanel.tsx:
+  * Added visibility + password state variables
+  * Added "Siapa yang Bisa Melihat Foto?" section with two buttons: "Umum" (Globe icon, green) and "Privat" (Lock icon, amber)
+  * When "Privat" selected, shows password input field with contextual placeholder (create vs edit mode)
+  * Info note: "Bagikan password ini hanya kepada kalangan yang Anda izinkan"
+  * Project cards in admin list show "Privat" badge (red, lock icon) for private galleries
+  * handleSubmit sends visibility + password in request body
+  * handleEditClick loads visibility (but never password — admin can leave empty to keep existing)
+- Updated GalleryView.tsx:
+  * Added password state: passwordInput, passwordVerifying, unlockedPassword
+  * sessionStorage caching: password stored per-project in sessionStorage so user doesn't re-enter on every search
+  * buildFetchUrl: includes password query param when unlocked
+  * fetchHeaders: includes x-user-email header for admin bypass
+  * Password prompt UI: centered card with lock icon, "Galeri Privat" title, description, password input, "Buka Galeri" button, error message (if wrong), "Hubungi Admin: synclicen@gmail.com" note
+  * Polling disabled when gallery is locked (requiresPassword)
+  * handlePasswordSubmit: stores password in sessionStorage, triggers re-fetch
+- Updated page.tsx:
+  * Pass userEmail prop to GalleryView (for admin bypass)
+  * Gallery cards show "Privat" badge (red, lock icon) for private galleries
+- Lint: 0 errors, 0 warnings (removed unused eslint-disable directives).
+- Local testing verified:
+  * API: create private gallery, GET without password (requiresPassword:true), GET with wrong password (error), GET with correct password (unlocked), GET as admin (bypass), all pass.
+  * UI: private gallery card shows "Privat" badge, clicking opens password prompt, entering correct password unlocks gallery, wrong password shows error message.
+- Built with OpenNext, deployed to Cloudflare Workers (Version a36a854a).
+- Pushed to GitHub (commit a370530). GitHub Actions run #7: success.
+- Also gitignored upload/ directory (user screenshots not part of app), run #8: success.
+- Production verified:
+  * Schema migration applied on Turso — existing galleries show visibility:"public"
+  * Created test private gallery on production, verified full password flow (no password → locked, correct password → unlocked, admin bypass → unlocked), then cleaned up.
+  * Agent Browser + VLM: private gallery card shows "Privat" badge, password prompt renders correctly with all elements (lock icon, title, input, button, contact admin note).
+
+Stage Summary:
+- ✅ Feature live on production at https://lihum.synclicen.workers.dev
+- ✅ Admin can choose "Umum" (public) or "Privat" (private) when creating/editing a gallery
+- ✅ Private galleries appear on the public gallery list with a red "Privat" badge
+- ✅ Visitors clicking a private gallery see a password prompt with lock icon + "Hubungi Admin" note
+- ✅ Correct password unlocks the gallery (cached in sessionStorage for the session)
+- ✅ Wrong password shows error message
+- ✅ Admin/manager bypass password check (don't need to enter password for their own galleries)
+- ✅ Passwords hashed with SHA-256 + salt via Web Crypto API (never stored in plaintext, never returned in API responses)
+- ✅ DB migration is idempotent (safe to run on existing databases)
+- ✅ GitHub Actions auto-deploy: run #7 + #8 both success
