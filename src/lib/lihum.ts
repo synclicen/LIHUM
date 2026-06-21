@@ -1,8 +1,9 @@
 import { ensureSeed } from "@/lib/seed";
 import { findAccountByEmail, createAccount } from "@/lib/queries";
+import { hashPassword, generateSalt, verifyPassword } from "@/lib/password";
 
 // Re-export so API routes can import everything from a single module.
-export { ensureSeed };
+export { ensureSeed, hashPassword, generateSalt, verifyPassword };
 
 /** Returns the role for an email, or null if not registered. */
 export async function getAccountRole(

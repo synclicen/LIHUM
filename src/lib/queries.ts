@@ -14,6 +14,8 @@ export interface ProjectRow {
   driveFolderUrl: string;
   driveFolderId: string;
   displayMode: string;
+  visibility: string; // "public" | "private"
+  password: string; // "salt:hash" or "" for public galleries
   autoSyncEnabled: number; // 0 | 1
   autoSyncInterval: string;
   lastSyncedAt: string;
@@ -48,6 +50,8 @@ export interface NewProjectInput {
   driveFolderUrl: string;
   driveFolderId: string;
   displayMode: "all" | "search";
+  visibility: "public" | "private";
+  password: string; // pre-hashed "salt:hash" or "" for public
   autoSyncEnabled: boolean;
   autoSyncInterval: string;
   createdAt: string;
@@ -59,6 +63,8 @@ export interface UpdateProjectInput {
   driveFolderUrl?: string;
   driveFolderId?: string;
   displayMode?: "all" | "search";
+  visibility?: "public" | "private";
+  password?: string; // pre-hashed "salt:hash" or "" to clear
   autoSyncEnabled?: boolean;
   autoSyncInterval?: string;
   lastSyncedAt?: string;
@@ -91,6 +97,8 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   driveFolderUrl: String(r.driveFolderUrl ?? ""),
   driveFolderId: String(r.driveFolderId ?? ""),
   displayMode: String(r.displayMode ?? "all"),
+  visibility: String(r.visibility ?? "public"),
+  password: String(r.password ?? ""),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
@@ -151,8 +159,8 @@ export async function getProjectWithPhotos(
 
 export async function createProject(input: NewProjectInput): Promise<ProjectRow> {
   await db.execute({
-    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, visibility, password, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       input.id,
       input.name,
@@ -160,6 +168,8 @@ export async function createProject(input: NewProjectInput): Promise<ProjectRow>
       input.driveFolderUrl,
       input.driveFolderId,
       input.displayMode,
+      input.visibility,
+      input.password,
       input.autoSyncEnabled ? 1 : 0,
       input.autoSyncInterval,
       "",
@@ -184,6 +194,8 @@ export async function updateProject(
     driveFolderUrl: input.driveFolderUrl ?? existing.driveFolderUrl,
     driveFolderId: input.driveFolderId ?? existing.driveFolderId,
     displayMode: input.displayMode ?? existing.displayMode,
+    visibility: input.visibility ?? existing.visibility,
+    password: input.password !== undefined ? input.password : existing.password,
     autoSyncEnabled:
       input.autoSyncEnabled !== undefined
         ? input.autoSyncEnabled
@@ -195,13 +207,15 @@ export async function updateProject(
   };
 
   await db.execute({
-    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
+    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, visibility=?, password=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
     args: [
       merged.name,
       merged.description,
       merged.driveFolderUrl,
       merged.driveFolderId,
       merged.displayMode,
+      merged.visibility,
+      merged.password,
       merged.autoSyncEnabled,
       merged.autoSyncInterval,
       merged.lastSyncedAt,

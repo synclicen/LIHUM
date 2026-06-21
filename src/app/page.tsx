@@ -253,6 +253,7 @@ export default function App() {
             }}
             onShare={(proj) => setShareProject(proj)}
             isAdmin={isAdminMode && !!user}
+            userEmail={user?.email || undefined}
           />
         ) : (
           <div className="space-y-12">
@@ -393,29 +394,37 @@ export default function App() {
                         <div className="absolute inset-0 bg-gradient-to-br from-[#4C2A85]/5 to-[#D4AF37]/5 opacity-0 group-hover:opacity-100 rounded-2xl transition-opacity duration-300 pointer-events-none" />
 
                         <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4AF37] font-semibold bg-[#1F0F3D] px-2 py-0.5 rounded">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4AF37] font-semibold bg-[#1F0F3D] px-2 py-0.5 rounded shrink-0">
                               LIHUM: Lihat, Unduh Mandiri!
                             </span>
-                            <span
-                              className={`text-[9px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-semibold ${
-                                project.displayMode === "all"
-                                  ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                  : "bg-amber-50 text-amber-600 border-amber-100"
-                              }`}
-                            >
-                              {project.displayMode === "all" ? (
-                                <>
-                                  <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-500" />
-                                  <span>Eksplorasi</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-500" />
-                                  <span>Cari Saja</span>
-                                </>
+                            <div className="flex items-center space-x-1 shrink-0">
+                              <span
+                                className={`text-[9px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-semibold ${
+                                  project.displayMode === "all"
+                                    ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                    : "bg-amber-50 text-amber-600 border-amber-100"
+                                }`}
+                              >
+                                {project.displayMode === "all" ? (
+                                  <>
+                                    <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-500" />
+                                    <span>Eksplorasi</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-500" />
+                                    <span>Cari Saja</span>
+                                  </>
+                                )}
+                              </span>
+                              {project.visibility === "private" && (
+                                <span className="text-[9px] px-2 py-0.5 rounded-full inline-flex items-center border font-semibold bg-red-50 text-red-600 border-red-100">
+                                  <Lock className="w-2.5 h-2.5 mr-0.5 text-red-500" />
+                                  <span>Privat</span>
+                                </span>
                               )}
-                            </span>
+                            </div>
                           </div>
 
                           <h3 className="text-lg font-serif font-bold text-slate-900 group-hover:text-[#4C2A85] transition-colors leading-snug">

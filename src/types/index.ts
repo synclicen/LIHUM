@@ -15,12 +15,17 @@ export interface Project {
   driveFolderUrl: string;
   driveFolderId: string;
   displayMode: "all" | "search";
+  visibility: "public" | "private";
   photos: Photo[];
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;
   autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
   lastSyncedAt?: string;
+  /** Present only when the gallery is private and the visitor hasn't unlocked it. */
+  requiresPassword?: boolean;
+  /** Present when a password was submitted but incorrect. */
+  passwordError?: string;
 }
 
 export interface ProjectSummary {
@@ -30,6 +35,7 @@ export interface ProjectSummary {
   driveFolderUrl: string;
   driveFolderId: string;
   displayMode: "all" | "search";
+  visibility: "public" | "private";
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;

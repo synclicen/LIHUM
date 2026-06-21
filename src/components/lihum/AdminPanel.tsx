@@ -53,6 +53,8 @@ export default function AdminPanel({
   const [description, setDescription] = useState("");
   const [driveFolderUrl, setDriveFolderUrl] = useState("");
   const [displayMode, setDisplayMode] = useState<"all" | "search">("all");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [password, setPassword] = useState("");
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState<
     "1m" | "3m" | "5m" | "1h" | "6h"
@@ -87,6 +89,8 @@ export default function AdminPanel({
     setDescription("");
     setDriveFolderUrl("");
     setDisplayMode("all");
+    setVisibility("public");
+    setPassword("");
     setAutoSyncEnabled(false);
     setAutoSyncInterval("3m");
     setErrorMsg("");
@@ -99,6 +103,8 @@ export default function AdminPanel({
     setDescription(project.description);
     setDriveFolderUrl(project.driveFolderUrl);
     setDisplayMode(project.displayMode);
+    setVisibility(project.visibility || "public");
+    setPassword(""); // never pre-fill — admin can leave empty to keep existing
     setAutoSyncEnabled(!!project.autoSyncEnabled);
     setAutoSyncInterval(project.autoSyncInterval || "3m");
     setErrorMsg("");
@@ -156,6 +162,8 @@ export default function AdminPanel({
           description,
           driveFolderUrl,
           displayMode,
+          visibility,
+          password: visibility === "private" ? password : undefined,
           autoSyncEnabled,
           autoSyncInterval,
         }),
@@ -518,6 +526,78 @@ export default function AdminPanel({
                 </div>
               </div>
 
+              {/* Visibility (Public/Private) Section */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+                  Siapa yang Bisa Melihat Foto?
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("public")}
+                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                      visibility === "public"
+                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Umum</span>
+                    </div>
+                    <span className="text-[9px] text-slate-300 text-center font-normal">
+                      Semua pengunjung bebas melihat
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("private")}
+                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                      visibility === "private"
+                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Privat</span>
+                    </div>
+                    <span className="text-[9px] text-slate-300 text-center font-normal">
+                      Perlu password untuk membuka
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Password field — only shown when visibility is private */}
+              {visibility === "private" && (
+                <div className="space-y-1.5 animate-fadeIn">
+                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+                    Password Galeri
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={
+                      isEditing
+                        ? "Kosongkan jika tidak ingin mengubah password"
+                        : "Masukkan password (min. 3 karakter)"
+                    }
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-mono"
+                    autoComplete="off"
+                  />
+                  <p className="text-[10px] text-slate-400 flex items-center space-x-1">
+                    <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+                    <span>
+                      Bagikan password ini hanya kepada kalangan yang Anda
+                      izinkan. Pengunjung lain akan diminta menghubungi admin.
+                    </span>
+                  </p>
+                </div>
+              )}
+
               {/* Auto Sync Settings Section */}
               <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
                 <div className="flex items-center justify-between mb-1">
@@ -635,28 +715,36 @@ export default function AdminPanel({
                       <div>
                         {/* Card Head */}
                         <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-serif text-sm font-bold text-white group-hover:text-[#D4AF37] transition-colors">
+                          <h3 className="font-serif text-sm font-bold text-white group-hover:text-[#D4AF37] transition-colors pr-2">
                             {project.name}
                           </h3>
-                          <span
-                            className={`text-[10px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-medium ${
-                              project.displayMode === "all"
-                                ? "bg-emerald-950/45 text-emerald-400 border-emerald-900/50"
-                                : "bg-amber-950/40 text-amber-400 border-amber-900/50"
-                            }`}
-                          >
-                            {project.displayMode === "all" ? (
-                              <>
-                                <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-400" />
-                                <span>Publik</span>
-                              </>
-                            ) : (
-                              <>
-                                <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-400" />
-                                <span>Pencarian</span>
-                              </>
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <span
+                              className={`text-[10px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-medium ${
+                                project.displayMode === "all"
+                                  ? "bg-emerald-950/45 text-emerald-400 border-emerald-900/50"
+                                  : "bg-amber-950/40 text-amber-400 border-amber-900/50"
+                              }`}
+                            >
+                              {project.displayMode === "all" ? (
+                                <>
+                                  <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-400" />
+                                  <span>Semua</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-400" />
+                                  <span>Cari</span>
+                                </>
+                              )}
+                            </span>
+                            {project.visibility === "private" && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-medium bg-red-950/40 text-red-400 border-red-900/50">
+                                <Lock className="w-2.5 h-2.5 mr-0.5" />
+                                <span>Privat</span>
+                              </span>
                             )}
-                          </span>
+                          </div>
                         </div>
 
                         <p className="text-xs text-slate-300 line-clamp-2 mb-3 h-8">

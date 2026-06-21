@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSeed, getAccountRole, parseDriveFolderId } from "@/lib/lihum";
+import {
+  ensureSeed,
+  getAccountRole,
+  parseDriveFolderId,
+  hashPassword,
+  verifyPassword,
+} from "@/lib/lihum";
 import {
   getProjectWithPhotos,
   findProjectById,
@@ -23,6 +29,7 @@ function photoOut(p: PhotoRow) {
 }
 
 function projectOut(p: ProjectRow) {
+  // NOTE: never include `password` here — it must never leave the server.
   return {
     id: p.id,
     name: p.name,
@@ -30,6 +37,7 @@ function projectOut(p: ProjectRow) {
     driveFolderUrl: p.driveFolderUrl,
     driveFolderId: p.driveFolderId,
     displayMode: p.displayMode as "all" | "search",
+    visibility: p.visibility as "public" | "private",
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -38,7 +46,8 @@ function projectOut(p: ProjectRow) {
   };
 }
 
-// GET /api/projects/:id — filters photos by display mode + search query
+// GET /api/projects/:id — filters photos by display mode + search query.
+// For private galleries, requires a correct `password` query param to return photos.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -47,6 +56,7 @@ export async function GET(
   const { id } = await params;
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
+  const password = searchParams.get("password") || "";
 
   const data = await getProjectWithPhotos(id);
   if (!data) {
@@ -54,6 +64,30 @@ export async function GET(
   }
 
   const { project, photos } = data;
+
+  // ── Private gallery: verify password before returning any photos ──
+  // Admins/managers bypass the password check (they manage the gallery).
+  if (project.visibility === "private") {
+    const userEmail = req.headers.get("x-user-email") || undefined;
+    const adminRole = await getAccountRole(userEmail);
+    const isAdmin = adminRole !== null;
+
+    const ok = isAdmin || (password ? await verifyPassword(password, project.password) : false);
+    if (!ok) {
+      // Return project metadata (so the UI can render the password prompt)
+      // but with NO photos and a requiresPassword flag.
+      return NextResponse.json({
+        ...projectOut(project),
+        photos: [],
+        requiresPassword: true,
+        passwordError: password
+          ? "Password salah. Silakan coba lagi atau hubungi admin."
+          : undefined,
+      });
+    }
+  }
+
+  // ── Password OK (or public gallery) — filter photos by display mode + search ──
   let filtered = photos;
   if (project.displayMode === "search") {
     if (!search || search.trim() === "") {
@@ -95,12 +129,51 @@ export async function PUT(
   }
 
   const body = await req.json().catch(() => ({}));
-  const { name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval, lastSyncedAt } = body;
+  const {
+    name,
+    description,
+    driveFolderUrl,
+    displayMode,
+    visibility,
+    password,
+    autoSyncEnabled,
+    autoSyncInterval,
+    lastSyncedAt,
+  } = body;
 
   let driveFolderId = existing.driveFolderId;
   if (driveFolderUrl) {
     const parsed = parseDriveFolderId(driveFolderUrl);
     if (parsed) driveFolderId = parsed;
+  }
+
+  // ── Handle visibility + password updates ──
+  const vis: "public" | "private" =
+    visibility === "private" ? "private" : visibility === "public" ? "public" : (existing.visibility as "public" | "private");
+
+  let hashedPassword: string | undefined = undefined;
+  if (vis === "private") {
+    // If switching to private or already private and a new password is provided
+    if (typeof password === "string" && password.trim().length > 0) {
+      if (password.trim().length < 3) {
+        return NextResponse.json(
+          { error: "Password minimal 3 karakter." },
+          { status: 400 }
+        );
+      }
+      hashedPassword = await hashPassword(password.trim());
+    } else if (vis === "private" && !existing.password) {
+      // Switching to private but no password provided and no existing password
+      return NextResponse.json(
+        { error: "Galeri privat wajib memiliki password." },
+        { status: 400 }
+      );
+    }
+    // If password is empty/undefined and existing.password exists, keep the old one
+    // (handled by updateProject: password !== undefined ? password : existing.password)
+  } else if (vis === "public") {
+    // Switching to public — clear the password
+    hashedPassword = "";
   }
 
   const updated = await updateProject(id, {
@@ -109,6 +182,8 @@ export async function PUT(
     driveFolderUrl,
     driveFolderId,
     displayMode,
+    visibility: vis,
+    password: hashedPassword,
     autoSyncEnabled,
     autoSyncInterval,
     lastSyncedAt,

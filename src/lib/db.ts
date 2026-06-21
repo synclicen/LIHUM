@@ -49,8 +49,21 @@ export const db: Client = new Proxy({} as Client, {
 let schemaPromise: Promise<void> | null = null;
 
 /**
- * Idempotently creates the LIHUM schema (Project, Photo, Account).
- * Safe to call on every request — uses CREATE TABLE IF NOT EXISTS.
+ * Adds a column to a table if it doesn't already exist.
+ * Used for schema migrations on existing databases (CREATE TABLE IF NOT EXISTS
+ * won't add new columns to an already-existing table).
+ */
+async function ensureColumn(table: string, column: string, definition: string) {
+  const result = await db.execute({ sql: `PRAGMA table_info(${table})` });
+  const existing = result.rows.map((r) => String((r as Record<string, unknown>).name));
+  if (!existing.includes(column)) {
+    await db.execute({ sql: `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}` });
+  }
+}
+
+/**
+ * Idempotently creates the LIHUM schema (Project, Photo, Account) and runs
+ * lightweight migrations for new columns. Safe to call on every request.
  * Concurrent calls are deduplicated.
  */
 export async function ensureSchema(): Promise<void> {
@@ -99,6 +112,10 @@ export async function ensureSchema(): Promise<void> {
 )`,
       },
     ]);
+
+    // Migrations: add new columns to existing Project table (idempotent).
+    await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
+    await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
   })();
   try {
     await schemaPromise;

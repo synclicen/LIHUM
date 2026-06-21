@@ -14,6 +14,7 @@ import {
   Loader2,
   Lock,
   Share2,
+  AlertCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -22,6 +23,7 @@ interface GalleryViewProps {
   onBack: () => void;
   onShare?: (project: any) => void;
   isAdmin?: boolean;
+  userEmail?: string;
 }
 
 export default function GalleryView({
@@ -29,6 +31,7 @@ export default function GalleryView({
   onBack,
   onShare,
   isAdmin,
+  userEmail,
 }: GalleryViewProps) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +39,20 @@ export default function GalleryView({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activePhoto, setActivePhoto] = useState<Photo | null>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Password state for private galleries
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordVerifying, setPasswordVerifying] = useState(false);
+  // unlockedPassword is stored in sessionStorage so the user doesn't re-enter on every search
+  const [unlockedPassword, setUnlockedPassword] = useState<string>("");
+
+  // Load cached password from sessionStorage on mount / project change
+  useEffect(() => {
+    const cached = sessionStorage.getItem(`lihum:gallery-password:${projectId}`);
+    if (cached) setUnlockedPassword(cached);
+    else setUnlockedPassword("");
+    setPasswordInput("");
+  }, [projectId]);
 
   // Debounce search query to prevent excessive backend fetching
   useEffect(() => {
@@ -48,14 +65,28 @@ export default function GalleryView({
     };
   }, [searchQuery]);
 
+  // Build the fetch URL with optional password + search query
+  const buildFetchUrl = (search: string) => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (unlockedPassword) params.set("password", unlockedPassword);
+    const qs = params.toString();
+    return `/api/projects/${projectId}${qs ? `?${qs}` : ""}`;
+  };
+
+  // Request headers — include admin email so private galleries are unlocked for admins
+  const fetchHeaders: HeadersInit = userEmail
+    ? { "x-user-email": userEmail }
+    : {};
+
   // Fetch project details (with photos list)
   useEffect(() => {
     const fetchProjectDetails = async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `/api/projects/${projectId}?search=${encodeURIComponent(debouncedQuery)}`
-        );
+        const res = await fetch(buildFetchUrl(debouncedQuery), {
+          headers: fetchHeaders,
+        });
         if (!res.ok) throw new Error("Gagal mengambil data galeri.");
         const data = await res.json();
         setProject(data);
@@ -67,19 +98,24 @@ export default function GalleryView({
     };
 
     fetchProjectDetails();
-  }, [projectId, debouncedQuery]);
+  }, [projectId, debouncedQuery, unlockedPassword, userEmail]);
 
   // Dynamic automatic polling to detect additions, deletions, or changes instantly
   useEffect(() => {
+    // Don't poll if the gallery is locked (waiting for password)
+    if (project?.requiresPassword) return;
+
     const fetchUpdates = async () => {
       try {
-        const res = await fetch(
-          `/api/projects/${projectId}?search=${encodeURIComponent(debouncedQuery)}`
-        );
+        const res = await fetch(buildFetchUrl(debouncedQuery), {
+          headers: fetchHeaders,
+        });
         if (res.ok) {
           const data = await res.json();
           setProject((prev) => {
             if (!prev) return data;
+            // Don't overwrite with a locked state if we're already unlocked
+            if (data.requiresPassword && !prev.requiresPassword) return prev;
             const sizeOrCountChanged =
               prev.photoCount !== data.photoCount ||
               prev.photos?.length !== data.photos?.length;
@@ -105,7 +141,22 @@ export default function GalleryView({
 
     const intervalId = setInterval(fetchUpdates, 10000);
     return () => clearInterval(intervalId);
-  }, [projectId, debouncedQuery]);
+  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword]);
+
+  // Handle password submission for private galleries
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordInput.trim()) return;
+    setPasswordVerifying(true);
+    // Set the unlockedPassword — the fetch effect will re-run automatically
+    // and verify it against the server.
+    sessionStorage.setItem(
+      `lihum:gallery-password:${projectId}`,
+      passwordInput.trim()
+    );
+    setUnlockedPassword(passwordInput.trim());
+    setPasswordVerifying(false);
+  };
 
   const clearSearch = () => {
     setSearchQuery("");
@@ -191,6 +242,59 @@ export default function GalleryView({
           >
             Kembali
           </button>
+        </div>
+      ) : project.requiresPassword ? (
+        /* ── Private gallery: password prompt ── */
+        <div className="flex-grow flex flex-col items-center justify-center py-8">
+          <div className="w-full max-w-sm bg-[#120A21]/60 border border-[#D4AF37]/25 rounded-3xl p-8 shadow-2xl space-y-5 backdrop-blur-md text-center">
+            <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto shadow-md">
+              <Lock className="w-6 h-6 text-amber-400" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-serif text-lg font-bold text-white">
+                Galeri Privat
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Galeri <strong className="text-slate-200">{project.name}</strong>{" "}
+                bersifat privat. Masukkan password untuk melihat foto di dalamnya.
+              </p>
+            </div>
+
+            {project.passwordError && (
+              <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-300 rounded-lg text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                <span>{project.passwordError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handlePasswordSubmit} className="space-y-3">
+              <input
+                type="password"
+                autoFocus
+                placeholder="Masukkan password galeri..."
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all text-center font-mono"
+                autoComplete="off"
+              />
+              <button
+                type="submit"
+                disabled={passwordVerifying || !passwordInput.trim()}
+                className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
+              >
+                {passwordVerifying ? "Memverifikasi..." : "Buka Galeri"}
+              </button>
+            </form>
+
+            <div className="pt-3 border-t border-[#D4AF37]/10 space-y-1">
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                Tidak punya password?
+              </p>
+              <p className="text-[10px] text-[#D4AF37]/80 font-mono">
+                Hubungi Admin: synclicen@gmail.com
+              </p>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="flex-grow flex flex-col min-h-0 space-y-4">

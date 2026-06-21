@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSeed, getAccountRole, parseDriveFolderId, slugify } from "@/lib/lihum";
+import { ensureSeed, getAccountRole, parseDriveFolderId, slugify, hashPassword } from "@/lib/lihum";
 import {
   getAllProjectSummaries,
   findProjectById,
@@ -16,6 +16,7 @@ function summaryOut(p: ProjectRow) {
     driveFolderUrl: p.driveFolderUrl,
     driveFolderId: p.driveFolderId,
     displayMode: p.displayMode as "all" | "search",
+    visibility: p.visibility as "public" | "private",
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -44,7 +45,17 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const { name, description, driveFolderUrl, displayMode, autoSyncEnabled, autoSyncInterval } = body;
+  const {
+    name,
+    description,
+    driveFolderUrl,
+    displayMode,
+    visibility,
+    password,
+    autoSyncEnabled,
+    autoSyncInterval,
+  } = body;
+
   if (!name || !driveFolderUrl) {
     return NextResponse.json(
       { error: "Nama galeri dan Link Google Drive wajib diisi." },
@@ -58,6 +69,19 @@ export async function POST(req: NextRequest) {
       { error: "Tautan Google Drive tidak valid. Pastikan format /folders/ID benar." },
       { status: 400 }
     );
+  }
+
+  // Validate visibility + password
+  const vis: "public" | "private" = visibility === "private" ? "private" : "public";
+  let hashedPassword = "";
+  if (vis === "private") {
+    if (!password || String(password).trim().length < 3) {
+      return NextResponse.json(
+        { error: "Galeri privat wajib memiliki password (minimal 3 karakter)." },
+        { status: 400 }
+      );
+    }
+    hashedPassword = await hashPassword(String(password).trim());
   }
 
   const id = slugify(name);
@@ -76,6 +100,8 @@ export async function POST(req: NextRequest) {
     driveFolderUrl,
     driveFolderId,
     displayMode: displayMode || "all",
+    visibility: vis,
+    password: hashedPassword,
     autoSyncEnabled: autoSyncEnabled === true,
     autoSyncInterval: autoSyncInterval || "3m",
     createdAt: new Date().toISOString().split("T")[0],
