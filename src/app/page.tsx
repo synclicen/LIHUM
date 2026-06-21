@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { User } from "firebase/auth";
 import Header from "@/components/lihum/Header";
 import AdminPanel from "@/components/lihum/AdminPanel";
@@ -39,10 +39,26 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [shareProject, setShareProject] = useState<ProjectSummary | null>(null);
 
-  // Load projects from the backend
+  // Ref that always holds the latest admin email, so loadProjects (which is
+  // captured once by the polling interval) always reads the current value
+  // instead of a stale closure.
+  const userEmailRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    userEmailRef.current = user?.email || undefined;
+  }, [user]);
+
+  // Load projects from the backend.
+  // When an admin/manager is logged in, we send their email so the API
+  // returns ALL galleries (including hidden ones). The public grid below
+  // filters hidden galleries client-side so visitors don't see them,
+  // while the AdminPanel receives the full list for management.
   const loadProjects = async () => {
     try {
-      const res = await fetch("/api/projects");
+      const headers: HeadersInit = {};
+      if (userEmailRef.current) {
+        headers["x-user-email"] = userEmailRef.current;
+      }
+      const res = await fetch("/api/projects", { headers });
       if (!res.ok) throw new Error("Gagal memuat galeri dari server.");
       const data = await res.json();
       setProjects(data);
@@ -59,6 +75,9 @@ export default function App() {
       async (firebaseUser, token) => {
         setUser(firebaseUser);
         setAccessToken(token);
+        // Update the ref immediately so loadProjects (called below) picks
+        // up the admin email and fetches ALL galleries including hidden ones.
+        userEmailRef.current = firebaseUser.email || undefined;
 
         try {
           const res = await fetch("/api/accounts/me", {
@@ -68,6 +87,9 @@ export default function App() {
             const data = await res.json();
             setRole(data.role);
             setIsAdminMode(!!data.role);
+            // Re-fetch projects now that we have an admin email — this
+            // populates the AdminPanel with hidden galleries too.
+            loadProjects();
           } else {
             setRole(null);
             setIsAdminMode(false);
@@ -83,6 +105,8 @@ export default function App() {
         setAccessToken("");
         setRole(null);
         setIsAdminMode(false);
+        userEmailRef.current = undefined;
+        loadProjects();
       }
     );
 
@@ -455,7 +479,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {projects.map((project) => {
+                  {projects.filter((p) => !p.isHidden).map((project) => {
                     return (
                       <div
                         key={project.id}
