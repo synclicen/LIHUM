@@ -21,6 +21,10 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Share2,
+  Download,
+  QrCode,
+  FolderSync,
+  Camera,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -262,22 +266,96 @@ export default function App() {
               <div className="absolute top-0 left-0 w-96 h-96 bg-[#4C2A85]/20 rounded-full filter blur-[100px] pointer-events-none" />
               <div className="absolute bottom-0 right-0 w-80 h-80 bg-[#D4AF37]/5 rounded-full filter blur-[80px] pointer-events-none" />
 
-              <div className="space-y-4 max-w-3xl relative z-10">
-                <span className="inline-flex items-center space-x-2 bg-[#D4AF37]/15 text-[#D4AF37] px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border border-[#D4AF37]/30">
-                  <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
-                  <span>Gerbang Galeri Publik</span>
-                </span>
-                <h1 className="text-3xl md:text-5xl font-extrabold font-serif text-white tracking-wide leading-tight">
-                  LIHUM
-                  <span className="text-[#D4AF37]">
-                    : Lihat, Unduh Mandiri!
+              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                {/* Left: Heading + description */}
+                <div className="space-y-4 lg:col-span-7">
+                  <span className="inline-flex items-center space-x-2 bg-[#D4AF37]/15 text-[#D4AF37] px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border border-[#D4AF37]/30">
+                    <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+                    <span>Gerbang Galeri Publik</span>
                   </span>
-                </h1>
-                <p className="text-slate-200 text-sm md:text-base leading-relaxed font-light">
-                  Media berbagi foto kegiatan, pengunjung bebas memilih dan
-                  mengunduh foto langsung di halaman galeri yang dibagikan
-                  secara mandiri.
-                </p>
+                  <h1 className="text-3xl md:text-5xl font-extrabold font-serif text-white tracking-wide leading-tight">
+                    LIHUM
+                    <span className="text-[#D4AF37]">: Lihat, Unduh Mandiri!</span>
+                  </h1>
+                  <p className="text-slate-200 text-sm md:text-base leading-relaxed font-light">
+                    Media berbagi foto kegiatan, pengunjung bebas memilih dan
+                    mengunduh foto langsung di halaman galeri yang dibagikan
+                    secara mandiri.
+                  </p>
+                </div>
+
+                {/* Right: Decorative gallery preview + feature badges (desktop only) */}
+                <div className="hidden lg:flex lg:col-span-5 relative h-72 items-center justify-center">
+                  {/* Stacked photo frames — fanned arrangement */}
+                  <div className="relative w-full h-full">
+                    {/* Back frame */}
+                    <div className="absolute top-2 left-6 w-44 h-52 rounded-2xl bg-gradient-to-br from-[#1F0F3D] to-[#0C061A] border border-[#D4AF37]/20 shadow-2xl rotate-[-8deg] overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-br from-[#4C2A85]/30 to-transparent" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Camera className="w-10 h-10 text-[#D4AF37]/30" />
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 p-2.5 bg-gradient-to-t from-[#0C061A] to-transparent">
+                        <div className="h-1.5 w-3/4 bg-[#D4AF37]/30 rounded-full mb-1" />
+                        <div className="h-1 w-1/2 bg-slate-500/30 rounded-full" />
+                      </div>
+                    </div>
+
+                    {/* Middle frame */}
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-44 h-52 rounded-2xl bg-gradient-to-br from-[#4C2A85] to-[#1F0F3D] border border-[#D4AF37]/40 shadow-2xl rotate-[2deg] overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-br from-[#D4AF37]/10 to-transparent" />
+                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-[#D4AF37] text-[#4C2A85] text-[8px] font-bold uppercase tracking-wider">
+                        Galeri
+                      </div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="grid grid-cols-2 gap-1.5 p-3">
+                          {[0, 1, 2, 3].map((i) => (
+                            <div
+                              key={i}
+                              className="w-9 h-9 rounded bg-gradient-to-br from-[#D4AF37]/40 to-[#4C2A85]/40 border border-[#D4AF37]/20"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 p-2.5 bg-gradient-to-t from-[#0C061A] to-transparent">
+                        <div className="h-1.5 w-2/3 bg-[#D4AF37]/50 rounded-full mb-1" />
+                        <div className="h-1 w-1/3 bg-slate-400/40 rounded-full" />
+                      </div>
+                    </div>
+
+                    {/* Front frame */}
+                    <div className="absolute top-6 right-2 w-44 h-52 rounded-2xl bg-gradient-to-br from-[#F8F9FA] to-[#E8E9EB] border-2 border-[#D4AF37]/60 shadow-2xl rotate-[10deg] overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-br from-[#D4AF37]/5 to-transparent" />
+                      <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-[#4C2A85] text-[#D4AF37] text-[8px] font-bold uppercase tracking-wider">
+                        Unduh
+                      </div>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                        <div className="w-14 h-14 rounded-full bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center">
+                          <Download className="w-6 h-6 text-[#4C2A85]" />
+                        </div>
+                        <div className="h-1.5 w-16 bg-slate-400/40 rounded-full" />
+                        <div className="h-1 w-10 bg-slate-300/40 rounded-full" />
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 p-2.5 bg-gradient-to-t from-slate-200/40 to-transparent">
+                        <div className="h-1.5 w-3/4 bg-[#4C2A85]/30 rounded-full mb-1" />
+                        <div className="h-1 w-2/5 bg-slate-400/40 rounded-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Floating feature badges */}
+                  <div className="absolute top-0 right-0 flex items-center gap-1.5 bg-[#1F0F3D]/90 border border-[#D4AF37]/30 rounded-full px-3 py-1.5 shadow-lg backdrop-blur-sm">
+                    <FolderSync className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-[10px] font-mono text-slate-200 font-bold tracking-wide">
+                      Drive Sync
+                    </span>
+                  </div>
+                  <div className="absolute bottom-2 left-0 flex items-center gap-1.5 bg-[#1F0F3D]/90 border border-[#D4AF37]/30 rounded-full px-3 py-1.5 shadow-lg backdrop-blur-sm">
+                    <QrCode className="w-3.5 h-3.5 text-[#D4AF37]" />
+                    <span className="text-[10px] font-mono text-slate-200 font-bold tracking-wide">
+                      QR Share
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
