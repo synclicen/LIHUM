@@ -272,11 +272,6 @@ export default function ShareModal({ project, onClose }: ShareModalProps) {
             </button>
           </div>
         </div>
-
-        {/* Modal Decorative Footer */}
-        <div className="bg-slate-100 p-4 text-center border-t border-slate-200/60 text-[10px] text-slate-400 font-mono tracking-wider uppercase">
-          Fitur Berbagi Kreatif LIHUM
-        </div>
       </motion.div>
     </motion.div>
   );
