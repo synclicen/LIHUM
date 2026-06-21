@@ -23,7 +23,6 @@ import {
   Share2,
   Download,
   QrCode,
-  FolderSync,
   Camera,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -342,13 +341,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Floating feature badges */}
-                  <div className="absolute top-0 right-0 flex items-center gap-1.5 bg-[#1F0F3D]/90 border border-[#D4AF37]/30 rounded-full px-3 py-1.5 shadow-lg backdrop-blur-sm">
-                    <FolderSync className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-[10px] font-mono text-slate-200 font-bold tracking-wide">
-                      Drive Sync
-                    </span>
-                  </div>
+                  {/* Floating feature badge */}
                   <div className="absolute bottom-2 left-0 flex items-center gap-1.5 bg-[#1F0F3D]/90 border border-[#D4AF37]/30 rounded-full px-3 py-1.5 shadow-lg backdrop-blur-sm">
                     <QrCode className="w-3.5 h-3.5 text-[#D4AF37]" />
                     <span className="text-[10px] font-mono text-slate-200 font-bold tracking-wide">
