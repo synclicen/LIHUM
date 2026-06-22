@@ -210,18 +210,6 @@ export default function GalleryView({
           )}
         </div>
 
-        {project && (
-          <div className="flex items-center space-x-1.5 text-xs text-slate-500 font-mono">
-            <span>Server /</span>
-            <span className="text-slate-400 capitalize">
-              {project.displayMode} Mode
-            </span>
-            <span>/</span>
-            <span className="text-[#D4AF37] font-bold">
-              {project.photoCount} Total Foto
-            </span>
-          </div>
-        )}
       </div>
 
       {loading && !project ? (
@@ -476,6 +464,11 @@ export default function GalleryView({
                             >
                               {cleanName}
                             </h3>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-mono text-slate-400 truncate leading-tight max-w-full">
+                                {photo.name}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </motion.div>
