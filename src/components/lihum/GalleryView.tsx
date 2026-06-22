@@ -306,7 +306,7 @@ export default function GalleryView({
               <div className="relative z-10 flex flex-col space-y-0.5">
                 <div className="flex items-center space-x-1.5 text-[8px] uppercase font-mono tracking-widest text-amber-400">
                   <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-                  <span>Eksplorasi Kegiatan</span>
+                  <span>Dokumentasi Kegiatan</span>
                 </div>
                 <h2 className="text-sm md:text-base font-bold font-serif text-white tracking-wide leading-snug">
                   {project.name}
@@ -476,11 +476,6 @@ export default function GalleryView({
                             >
                               {cleanName}
                             </h3>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[9px] font-mono text-slate-400 truncate leading-tight max-w-full">
-                                {photo.name}
-                              </span>
-                            </div>
                           </div>
                         </div>
                       </motion.div>
