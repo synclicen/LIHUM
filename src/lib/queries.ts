@@ -32,6 +32,7 @@ export interface PhotoRow {
   webContentLink: string;
   size: string;
   createdTime: string;
+  modifiedTime: string;
   projectId: string;
 }
 
@@ -81,6 +82,7 @@ export interface NewPhotoInput {
   webContentLink: string;
   size: string;
   createdTime: string;
+  modifiedTime: string;
 }
 
 export interface NewAccountInput {
@@ -117,6 +119,7 @@ const asPhoto = (r: Record<string, unknown>): PhotoRow => ({
   webContentLink: String(r.webContentLink ?? ""),
   size: String(r.size ?? ""),
   createdTime: String(r.createdTime ?? ""),
+  modifiedTime: String(r.modifiedTime ?? ""),
   projectId: String(r.projectId ?? ""),
 });
 const asAccount = (r: Record<string, unknown>): AccountRow => ({
@@ -155,13 +158,35 @@ export async function findProjectById(id: string): Promise<ProjectRow | null> {
   return asProject(r.rows[0] as Record<string, unknown>);
 }
 
+/**
+ * Sort order for photos within a gallery.
+ *  - "name-asc"  : A → Z (by file name)
+ *  - "name-desc" : Z → A (by file name)
+ *  - "modified-desc" : newest modified first (Date Modified, descending)
+ *  - "modified-asc"  : oldest modified first (Date Modified, ascending)
+ *  - "default"   : insertion order (by createdTime ASC)
+ */
+export type PhotoSort = "default" | "name-asc" | "name-desc" | "modified-desc" | "modified-asc";
+
+const SORT_CLAUSES: Record<PhotoSort, string> = {
+  default: "createdTime ASC",
+  "name-asc": "name COLLATE NOCASE ASC",
+  "name-desc": "name COLLATE NOCASE DESC",
+  // Fall back to createdTime when modifiedTime is empty (legacy data pre-migration).
+  "modified-desc": "COALESCE(NULLIF(modifiedTime, ''), createdTime) DESC",
+  "modified-asc": "COALESCE(NULLIF(modifiedTime, ''), createdTime) ASC",
+};
+
 export async function getProjectWithPhotos(
-  id: string
+  id: string,
+  sort: PhotoSort = "default"
 ): Promise<{ project: ProjectRow; photos: PhotoRow[] } | null> {
   const project = await findProjectById(id);
   if (!project) return null;
+  const orderClause = SORT_CLAUSES[sort] || SORT_CLAUSES.default;
+  // orderClause is from a fixed whitelist (not user string) — safe to interpolate.
   const r = await db.execute({
-    sql: "SELECT * FROM Photo WHERE projectId = ? ORDER BY createdTime ASC",
+    sql: `SELECT * FROM Photo WHERE projectId = ? ORDER BY ${orderClause}`,
     args: [id],
   });
   return {
@@ -281,8 +306,8 @@ export async function replaceProjectPhotos(
   ];
   for (const p of photos) {
     stmts.push({
-      sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, projectId)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         p.id,
         p.name,
@@ -291,6 +316,7 @@ export async function replaceProjectPhotos(
         p.webContentLink,
         p.size,
         p.createdTime,
+        p.modifiedTime,
         projectId,
       ],
     });
@@ -315,8 +341,8 @@ export async function addProjectPhotos(
 ): Promise<void> {
   if (photos.length === 0) return;
   const stmts = photos.map((p) => ({
-    sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, projectId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       p.id,
       p.name,
@@ -325,6 +351,7 @@ export async function addProjectPhotos(
       p.webContentLink,
       p.size,
       p.createdTime,
+      p.modifiedTime,
       projectId,
     ],
   }));

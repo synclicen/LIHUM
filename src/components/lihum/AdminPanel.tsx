@@ -59,7 +59,7 @@ export default function AdminPanel({
   const [password, setPassword] = useState("");
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState<
-    "1m" | "3m" | "5m" | "1h" | "6h"
+    "30s" | "1m" | "3m" | "5m" | "1h" | "6h"
   >("3m");
 
   // Account form/management states
@@ -666,6 +666,9 @@ export default function AdminPanel({
                       }
                       className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
                     >
+                      <option className="bg-[#120A21]" value="30s">
+                        ⚡ Realtime (30 Detik)
+                      </option>
                       <option className="bg-[#120A21]" value="1m">
                         Setiap 1 Menit
                       </option>
@@ -684,7 +687,11 @@ export default function AdminPanel({
                     </select>
                     <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
                       *Tautan sinkronisasi berjalan otomatis di background ketika
-                      browser Admin/Manajer terhubung.
+                      browser Admin/Manajer terhubung.{" "}
+                      <span className="text-[#D4AF37]/80">
+                        Pilih <strong>Realtime</strong> agar foto baru/perubahan
+                        di Google Drive langsung tersinkron tiap 30 detik.
+                      </span>
                     </p>
                   </div>
                 )}
@@ -847,7 +854,9 @@ export default function AdminPanel({
                             >
                               {project.autoSyncEnabled
                                 ? `Aktif (${
-                                    project.autoSyncInterval === "1m"
+                                    project.autoSyncInterval === "30s"
+                                      ? "Realtime 30 Detik"
+                                      : project.autoSyncInterval === "1m"
                                       ? "1 Menit"
                                       : project.autoSyncInterval === "3m"
                                       ? "3 Menit"

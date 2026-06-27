@@ -194,6 +194,9 @@ export default function App() {
 
       let ms = 180000;
       switch (proj.autoSyncInterval) {
+        case "30s":
+          ms = 30000;
+          break;
         case "1m":
           ms = 60000;
           break;

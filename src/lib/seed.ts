@@ -22,6 +22,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&q=80&w=1600",
     size: "1.2 MB",
     createdTime: "2026-05-20",
+    modifiedTime: "2026-05-20",
   },
   {
     id: "sample-lumina-2",
@@ -33,6 +34,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&q=80&w=1600",
     size: "2.4 MB",
     createdTime: "2026-05-21",
+    modifiedTime: "2026-05-21",
   },
   {
     id: "sample-lumina-3",
@@ -44,6 +46,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&q=80&w=1600",
     size: "950 KB",
     createdTime: "2026-05-22",
+    modifiedTime: "2026-05-22",
   },
   {
     id: "sample-lumina-4",
@@ -55,6 +58,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1483168527879-c66136b56105?auto=format&fit=crop&q=80&w=1600",
     size: "1.8 MB",
     createdTime: "2026-05-23",
+    modifiedTime: "2026-05-23",
   },
   {
     id: "sample-lumina-5",
@@ -66,6 +70,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&q=80&w=1600",
     size: "1.5 MB",
     createdTime: "2026-05-24",
+    modifiedTime: "2026-05-24",
   },
   {
     id: "sample-lumina-6",
@@ -77,6 +82,7 @@ export const SAMPLE_PHOTOS_LUMINA: NewPhotoInput[] = [
       "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?auto=format&fit=crop&q=80&w=1600",
     size: "3.1 MB",
     createdTime: "2026-05-25",
+    modifiedTime: "2026-05-25",
   },
 ];
 

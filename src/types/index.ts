@@ -6,6 +6,7 @@ export interface Photo {
   webContentLink?: string;
   size?: string;
   createdTime?: string;
+  modifiedTime?: string;
 }
 
 export interface Project {

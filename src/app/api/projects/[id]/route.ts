@@ -14,6 +14,7 @@ import {
   toBool,
   type ProjectRow,
   type PhotoRow,
+  type PhotoSort,
 } from "@/lib/queries";
 
 function photoOut(p: PhotoRow) {
@@ -25,6 +26,7 @@ function photoOut(p: PhotoRow) {
     webContentLink: p.webContentLink || undefined,
     size: p.size || undefined,
     createdTime: p.createdTime || undefined,
+    modifiedTime: p.modifiedTime || undefined,
   };
 }
 
@@ -58,8 +60,11 @@ export async function GET(
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
   const password = searchParams.get("password") || "";
+  const sortRaw = searchParams.get("sort") || "default";
+  const VALID_SORTS: PhotoSort[] = ["default", "name-asc", "name-desc", "modified-desc", "modified-asc"];
+  const sort: PhotoSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as PhotoSort) : "default";
 
-  const data = await getProjectWithPhotos(id);
+  const data = await getProjectWithPhotos(id, sort);
   if (!data) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }

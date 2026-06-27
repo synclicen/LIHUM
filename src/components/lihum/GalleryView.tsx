@@ -15,6 +15,7 @@ import {
   Lock,
   Share2,
   AlertCircle,
+  ArrowUpDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -46,6 +47,20 @@ export default function GalleryView({
   // unlockedPassword is stored in sessionStorage so the user doesn't re-enter on every search
   const [unlockedPassword, setUnlockedPassword] = useState<string>("");
 
+  // Sort state — cached per gallery in sessionStorage
+  type SortKey = "default" | "name-asc" | "name-desc" | "modified-desc" | "modified-asc";
+  const [sortBy, setSortBy] = useState<SortKey>("default");
+  useEffect(() => {
+    const cached = sessionStorage.getItem(`lihum:gallery-sort:${projectId}`);
+    const valid: SortKey[] = ["default", "name-asc", "name-desc", "modified-desc", "modified-asc"];
+    if (cached && (valid as string[]).includes(cached)) setSortBy(cached as SortKey);
+    else setSortBy("default");
+  }, [projectId]);
+  const handleSortChange = (val: SortKey) => {
+    setSortBy(val);
+    sessionStorage.setItem(`lihum:gallery-sort:${projectId}`, val);
+  };
+
   // Load cached password from sessionStorage on mount / project change
   useEffect(() => {
     const cached = sessionStorage.getItem(`lihum:gallery-password:${projectId}`);
@@ -65,11 +80,12 @@ export default function GalleryView({
     };
   }, [searchQuery]);
 
-  // Build the fetch URL with optional password + search query
+  // Build the fetch URL with optional password + search query + sort
   const buildFetchUrl = (search: string) => {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     if (unlockedPassword) params.set("password", unlockedPassword);
+    if (sortBy && sortBy !== "default") params.set("sort", sortBy);
     const qs = params.toString();
     return `/api/projects/${projectId}${qs ? `?${qs}` : ""}`;
   };
@@ -98,7 +114,7 @@ export default function GalleryView({
     };
 
     fetchProjectDetails();
-  }, [projectId, debouncedQuery, unlockedPassword, userEmail]);
+  }, [projectId, debouncedQuery, unlockedPassword, userEmail, sortBy]);
 
   // Dynamic automatic polling to detect additions, deletions, or changes instantly
   useEffect(() => {
@@ -141,7 +157,7 @@ export default function GalleryView({
 
     const intervalId = setInterval(fetchUpdates, 10000);
     return () => clearInterval(intervalId);
-  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword]);
+  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, sortBy]);
 
   // Handle password submission for private galleries
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -307,7 +323,7 @@ export default function GalleryView({
               </div>
             </div>
 
-            <div className="w-full md:max-w-xs flex-shrink-0 flex flex-col justify-center">
+            <div className="w-full md:max-w-xs flex-shrink-0 flex flex-col justify-center gap-1.5">
               <div className="relative">
                 <input
                   type="text"
@@ -331,8 +347,33 @@ export default function GalleryView({
                 )}
               </div>
 
+              {/* Sort selector */}
+              <div className="relative">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => handleSortChange(e.target.value as any)}
+                  className="w-full h-8 pl-8 pr-7 rounded-lg bg-white border-none shadow-md text-slate-700 text-[11px] focus:outline-none focus:ring-2 focus:ring-[#D4AF37] transition-all font-sans appearance-none cursor-pointer"
+                  title="Urutkan foto"
+                >
+                  <option value="default">Urutan Default</option>
+                  <option value="name-asc">Nama (A → Z)</option>
+                  <option value="name-desc">Nama (Z → A)</option>
+                  <option value="modified-desc">Terbaru Diubah</option>
+                  <option value="modified-asc">Terlama Diubah</option>
+                </select>
+                <svg
+                  className="w-3 h-3 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+
               {isSearchMode && (
-                <div className="mt-1 flex items-center justify-start space-x-1 text-[8px] text-[#D4AF37]/90 font-mono">
+                <div className="flex items-center justify-start space-x-1 text-[8px] text-[#D4AF37]/90 font-mono">
                   <Lock className="w-2.5 h-2.5 text-[#D4AF37] shrink-0" />
                   <span>Mode Cari Aktif</span>
                 </div>

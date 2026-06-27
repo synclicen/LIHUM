@@ -56,7 +56,7 @@ async function listImagesRecursively(
     do {
       const q = `'${id}' in parents and trashed = false`;
       const fields =
-        "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, size)";
+        "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size)";
       let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
         q
       )}&fields=${encodeURIComponent(fields)}&pageSize=1000`;
@@ -180,6 +180,7 @@ export async function POST(
         webContentLink: file.webContentLink || "",
         size: sizeFormatted,
         createdTime: file.createdTime ? file.createdTime.split("T")[0] : "Unknown",
+        modifiedTime: file.modifiedTime ? file.modifiedTime.split("T")[0] : (file.createdTime ? file.createdTime.split("T")[0] : ""),
       };
     });
 
