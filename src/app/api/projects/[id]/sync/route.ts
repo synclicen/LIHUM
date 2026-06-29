@@ -254,7 +254,13 @@ export async function POST(
   try {
     const scanResult = await listImagesRecursively(token, folderId);
     const scanned = scanResult.results;
-    console.log(`[Sync] Project ${id}: ${scanned.length} images, strategy="${scanResult.rootStrategy}", foldersScanned=${scanResult.foldersScanned}, nonImage=${scanResult.nonImageFilesSkipped}, skipped=${scanResult.foldersSkipped}`);
+    console.log(`[Sync] Project ${id}: user=${userEmail}, ${scanned.length} images, strategy="${scanResult.rootStrategy}", foldersScanned=${scanResult.foldersScanned}, nonImage=${scanResult.nonImageFilesSkipped}, skipped=${scanResult.foldersSkipped}`);
+
+    // If 0 photos, prepend the syncing user's email to the error message
+    // so the admin knows WHICH Google account tried to access the folder.
+    if (scanned.length === 0 && scanResult.rootFolderError) {
+      scanResult.rootFolderError = `Email yang sedang login: ${userEmail}. ${scanResult.rootFolderError}`;
+    }
 
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
       const displayName = parentName
