@@ -8,21 +8,103 @@ import {
 } from "@/lib/queries";
 
 /**
- * Recursively lists all images in a Google Drive folder and its subfolders.
+ * Lists children of a Drive folder using multiple strategies.
+ * Different strategies are needed because:
+ *  - My Drive folders: default corpus works
+ *  - Shared Drive folders: need supportsAllDrives + includeItemsFromAllDrives
+ *  - Shared Drive root: may need corpora=drive + driveId
+ *  - Link-shared folders not owned by user: API may return 0 even if web UI works
  *
- * Uses Breadth-First Search (BFS) to traverse the folder tree so that
- * shallow photos appear first. For each image found, we also record the
- * name of its immediate parent folder so we can prefix the stored name —
- * this lets the manager identify which petugas/subfolder each photo came
- * from and prevents confusion when different subfolders contain files
- * with the same name (e.g. "IMG_001.jpg" from two different officers).
- *
- * Safety limits prevent runaway scanning on pathological trees.
- *
- * @param token     Google OAuth Bearer token (drive.readonly scope)
- * @param rootFolderId  The Drive folder ID the manager provided
- * @returns array of { file, parentName } where parentName is "" for
- *          photos directly inside rootFolderId.
+ * Returns the raw file list + which strategy succeeded.
+ */
+async function listFolderChildren(
+  token: string,
+  folderId: string
+): Promise<{ files: any[]; strategy: string; error?: string }> {
+  const fields =
+    "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size)";
+
+  // Strategy 1: default corpus (user) + shared drive support
+  const strategies: { name: string; params: URLSearchParams }[] = [
+    new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields,
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    }),
+    // Strategy 2: corpora=allDrives (search across all drives the user can access)
+    new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields,
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+      corpora: "allDrives",
+    }),
+    // Strategy 3: corpora=drive + driveId (if folderId is a Shared Drive root)
+    new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields,
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+      corpora: "drive",
+      driveId: folderId,
+    }),
+  ];
+
+  for (const strategy of strategies) {
+    const url = `https://www.googleapis.com/drive/v3/files?${strategy.params.toString()}`;
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(
+          `[Sync] Strategy "${strategy.name}" failed (HTTP ${response.status}): ${errorText.slice(0, 150)}`
+        );
+        continue;
+      }
+      const data: any = await response.json();
+      const files: any[] = data.files || [];
+      if (files.length > 0) {
+        return { files, strategy: strategy.name };
+      }
+    } catch (err) {
+      console.warn(`[Sync] Strategy "${strategy.name}" error:`, err);
+    }
+  }
+
+  // All strategies returned 0 files. Do a final check: is the folder accessible at all?
+  try {
+    const checkUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?supportsAllDrives=true&fields=id,name,mimeType`;
+    const checkRes = await fetch(checkUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!checkRes.ok) {
+      const errText = await checkRes.text();
+      return {
+        files: [],
+        strategy: "none",
+        error: `Folder tidak dapat diakses dengan token admin (HTTP ${checkRes.status}). Pastikan folder di-share secara eksplisit ke email admin, bukan hanya "Anyone with link". Detail: ${errText.slice(0, 200)}`,
+      };
+    }
+    const folderInfo: any = await checkRes.json();
+    return {
+      files: [],
+      strategy: "none",
+      error: `Folder "${folderInfo.name}" (mimeType: ${folderInfo.mimeType}) accessible tapi 0 file gambar ditemukan. Pastikan folder berisi file gambar (JPG/PNG) dan bukan kosong.`,
+    };
+  } catch (err) {
+    return { files: [], strategy: "none", error: `Gagal mengecek akses folder: ${err}` };
+  }
+}
+
+/**
+ * Recursively scans a Drive folder and all subfolders for images.
+ * Uses the multi-strategy listFolderChildren for each folder.
  */
 async function listImagesRecursively(
   token: string,
@@ -33,106 +115,63 @@ async function listImagesRecursively(
   maxDepthReached: number;
   nonImageFilesSkipped: number;
   foldersSkipped: number;
+  rootFolderError?: string;
+  rootStrategy?: string;
 }> {
   const results: { file: any; parentName: string }[] = [];
   const visited = new Set<string>([rootFolderId]);
-  // Queue of folders to scan: { id, parentName, depth }
-  // parentName is the NAME of this folder's immediate parent (for prefixing photos).
   const queue: { id: string; parentName: string; depth: number }[] = [
     { id: rootFolderId, parentName: "", depth: 0 },
   ];
 
-  const MAX_DEPTH = 15; // plenty for any real-world folder structure
-  const MAX_FOLDERS = 1000; // safety cap to prevent runaway scans
+  const MAX_DEPTH = 15;
+  const MAX_FOLDERS = 1000;
   let foldersScanned = 0;
   let maxDepthReached = 0;
   let nonImageFilesSkipped = 0;
   let foldersSkipped = 0;
+  let rootFolderError: string | undefined;
+  let rootStrategy: string | undefined;
 
   while (queue.length > 0) {
-    if (foldersScanned >= MAX_FOLDERS) {
-      console.warn(`[Sync] Reached MAX_FOLDERS (${MAX_FOLDERS}), stopping traversal.`);
-      break;
-    }
+    if (foldersScanned >= MAX_FOLDERS) break;
 
     const { id, parentName, depth } = queue.shift()!;
     foldersScanned++;
     if (depth > maxDepthReached) maxDepthReached = depth;
 
-    // List items in this folder, handling Drive API pagination.
-    // supportsAllDrives + includeItemsFromAllDrives are REQUIRED for folders
-    // that live inside Shared Drives (team drives) — without them the API
-    // silently returns an empty file list even though the folder is shared.
-    // NOTE: do NOT set corpora=allDrives — for parent-based queries it can
-    // cause the API to return 0 results. The default corpus (user) combined
-    // with includeItemsFromAllDrives already covers both My Drive and
-    // Shared Drive items the user can access.
-    let pageToken: string | undefined = undefined;
-    do {
-      const q = `'${id}' in parents and trashed = false`;
-      const fields =
-        "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size)";
-      const params = new URLSearchParams({
-        q,
-        fields,
-        pageSize: "1000",
-        supportsAllDrives: "true",
-        includeItemsFromAllDrives: "true",
-      });
-      if (pageToken) params.set("pageToken", pageToken);
-      const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
+    const { files, strategy, error } = await listFolderChildren(token, id);
 
-      let response: Response;
-      try {
-        response = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch (err) {
-        console.error(`[Sync] Network error scanning folder ${id}:`, err);
-        foldersSkipped++;
-        break; // skip this folder, continue with the rest of the queue
-      }
+    if (depth === 0) {
+      rootStrategy = strategy;
+      if (error) rootFolderError = error;
+    }
 
-      if (!response.ok) {
-        // Folder might not be shared with this account — skip it gracefully.
-        const errorText = await response.text();
-        console.warn(
-          `[Sync] Skipping folder ${id} (HTTP ${response.status}): ${errorText.slice(0, 200)}`
-        );
-        foldersSkipped++;
-        break;
-      }
+    if (error && files.length === 0) {
+      foldersSkipped++;
+      continue;
+    }
 
-      const data: any = await response.json();
-      const files: any[] = data.files || [];
-      console.log(`[Sync] Folder ${id} (depth ${depth}): ${files.length} items found`);
+    console.log(`[Sync] Folder ${id} (depth ${depth}, strategy "${strategy}"): ${files.length} items`);
 
-      for (const file of files) {
-        if (file.mimeType === "application/vnd.google-apps.folder") {
-          // Subfolder — queue it for scanning (respecting depth + visited guards)
-          if (depth + 1 <= MAX_DEPTH && !visited.has(file.id)) {
-            visited.add(file.id);
-            queue.push({ id: file.id, parentName: file.name, depth: depth + 1 });
-          }
-        } else if (file.mimeType && file.mimeType.startsWith("image/")) {
-          // Image file — collect it. parentName is the folder it lives in.
-          results.push({ file, parentName });
-        } else {
-          // Non-image file (video, document, etc.) — count for diagnostics.
-          nonImageFilesSkipped++;
+    for (const file of files) {
+      if (file.mimeType === "application/vnd.google-apps.folder") {
+        if (depth + 1 <= MAX_DEPTH && !visited.has(file.id)) {
+          visited.add(file.id);
+          queue.push({ id: file.id, parentName: file.name, depth: depth + 1 });
         }
+      } else if (file.mimeType && file.mimeType.startsWith("image/")) {
+        results.push({ file, parentName });
+      } else {
+        nonImageFilesSkipped++;
       }
-
-      pageToken = data.nextPageToken;
-    } while (pageToken);
+    }
   }
 
-  return { results, foldersScanned, maxDepthReached, nonImageFilesSkipped, foldersSkipped };
+  return { results, foldersScanned, maxDepthReached, nonImageFilesSkipped, foldersSkipped, rootFolderError, rootStrategy };
 }
 
 // POST /api/projects/:id/sync — Admin/Manager only.
-// Pulls image metadata from a Google Drive folder AND all its subfolders
-// using the signed-in manager's Bearer token.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -174,16 +213,11 @@ export async function POST(
   }
 
   try {
-    // Recursively scan the root folder + all subfolders.
     const scanResult = await listImagesRecursively(token, folderId);
     const scanned = scanResult.results;
-    console.log(`[Sync] Project ${id}: scan complete — ${scanned.length} images, ${scanResult.foldersScanned} folders scanned, ${scanResult.nonImageFilesSkipped} non-image files skipped, ${scanResult.foldersSkipped} folders skipped`);
+    console.log(`[Sync] Project ${id}: ${scanned.length} images, strategy="${scanResult.rootStrategy}", foldersScanned=${scanResult.foldersScanned}, nonImage=${scanResult.nonImageFilesSkipped}, skipped=${scanResult.foldersSkipped}`);
 
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
-      // Prefix photos from subfolders with the subfolder name so the
-      // manager can tell which petugas/subfolder each photo came from.
-      // Photos directly in the root folder keep their original name.
-      // We use " — " (em-dash) as separator because it's filename-safe.
       const displayName = parentName
         ? `${parentName} — ${file.name}`
         : file.name;
@@ -211,7 +245,6 @@ export async function POST(
 
     const lastSyncedAt = new Date().toISOString();
 
-    // Replace photos + update counts in one go.
     await replaceProjectPhotos(id, mappedPhotos);
     await updateProjectSync(id, mappedPhotos.length, lastSyncedAt);
 
@@ -222,6 +255,8 @@ export async function POST(
       maxDepthReached: scanResult.maxDepthReached,
       nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
       foldersSkipped: scanResult.foldersSkipped,
+      rootStrategy: scanResult.rootStrategy,
+      debug: scanResult.rootFolderError || undefined,
       photos: mappedPhotos,
       lastSyncedAt,
     });

@@ -247,14 +247,18 @@ export default function AdminPanel({
           : "";
       let extraInfo = "";
       if (data.photoCount === 0) {
-        // Diagnostics when 0 photos found — help admin understand why
-        const parts = [];
-        if (data.foldersScanned) parts.push(`${data.foldersScanned} folder discan`);
-        if (data.nonImageFilesSkipped) parts.push(`${data.nonImageFilesSkipped} file non-foto dilewati`);
-        if (data.foldersSkipped) parts.push(`${data.foldersSkipped} folder dilewati (no access)`);
-        extraInfo = parts.length
-          ? ` (${parts.join(", ")}). Pastikan folder berisi file gambar (JPG/PNG) dan di-share "Anyone with link can view".`
-          : ". Pastikan folder berisi file gambar dan di-share dengan benar.";
+        // Show debug info from server (rootFolderError) if available
+        if (data.debug) {
+          extraInfo = ` — ${data.debug}`;
+        } else {
+          const parts = [];
+          if (data.foldersScanned) parts.push(`${data.foldersScanned} folder discan`);
+          if (data.nonImageFilesSkipped) parts.push(`${data.nonImageFilesSkipped} file non-foto dilewati`);
+          if (data.foldersSkipped) parts.push(`${data.foldersSkipped} folder dilewati (no access)`);
+          extraInfo = parts.length
+            ? ` (${parts.join(", ")}). Pastikan folder berisi file gambar (JPG/PNG) dan di-share ke email admin.`
+            : ". Pastikan folder berisi file gambar dan di-share ke email admin (bukan hanya 'Anyone with link').";
+        }
       }
       setSuccessMsg(
         `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo} dari Google Drive.${extraInfo}`
