@@ -77,9 +77,32 @@ async function listFolderChildren(
     }
   }
 
-  // All strategies returned 0 files. Do a final check: is the folder accessible at all?
+  // All strategies returned 0 files. Diagnose why:
+  // 1. Is it a Shared Drive? (drives.get)
+  // 2. Is it a regular folder? (files.get with full fields)
+  // 3. Is it accessible at all?
+
+  // Check if folderId is a Shared Drive ID
   try {
-    const checkUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?supportsAllDrives=true&fields=id,name,mimeType`;
+    const driveCheckUrl = `https://www.googleapis.com/drive/v3/drives/${folderId}?fields=id,name`;
+    const driveCheckRes = await fetch(driveCheckUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (driveCheckRes.ok) {
+      const driveInfo: any = await driveCheckRes.json();
+      return {
+        files: [],
+        strategy: "none",
+        error: `Folder "${driveInfo.name}" adalah Shared Drive (Team Drive). Admin harus ditambahkan sebagai ANGGOTA Shared Drive oleh pemiliknya agar API bisa membaca isi. Link sharing "Anyone with link" TIDAK cukup untuk akses API pada Shared Drive. Solusi: minta pemilik Shared Drive menambahkan email admin sebagai member, ATAU pindahkan foto ke folder biasa di My Drive dan share ke email admin.`,
+      };
+    }
+  } catch {
+    // Not a shared drive, continue to files.get check
+  }
+
+  // Check if it's a regular folder accessible with this token
+  try {
+    const checkUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?supportsAllDrives=true&fields=id,name,mimeType,shared,driveId`;
     const checkRes = await fetch(checkUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -88,14 +111,30 @@ async function listFolderChildren(
       return {
         files: [],
         strategy: "none",
-        error: `Folder tidak dapat diakses dengan token admin (HTTP ${checkRes.status}). Pastikan folder di-share secara eksplisit ke email admin, bukan hanya "Anyone with link". Detail: ${errText.slice(0, 200)}`,
+        error: `Folder tidak dapat diakses dengan token admin (HTTP ${checkRes.status}). Folder di-share via "Anyone with link" tetapi email admin belum ditambahkan secara eksplisit. Solusi: buka folder di Google Drive, klik "Add shortcut to Drive" atau minta pemilik share ke email admin. Detail: ${errText.slice(0, 150)}`,
       };
     }
     const folderInfo: any = await checkRes.json();
+    // If folder has driveId, it's inside a Shared Drive
+    if (folderInfo.driveId) {
+      return {
+        files: [],
+        strategy: "none",
+        error: `Folder "${folderInfo.name}" berada di dalam Shared Drive. Admin belum terdaftar sebagai anggota Shared Drive tersebut. Link sharing tidak cukup untuk akses API. Solusi: minta pemilik Shared Drive menambahkan email admin sebagai member.`,
+      };
+    }
+    // Regular folder but 0 files — maybe link sharing only (not explicit share)
+    if (folderInfo.shared) {
+      return {
+        files: [],
+        strategy: "none",
+        error: `Folder "${folderInfo.name}" di-share via link, tetapi API tidak bisa list isi folder. Solusi: buka folder di Google Drive (via link), klik tombol "Add shortcut to Drive" atau "Add to My Drive" — ini memberi akses eksplisit ke akun admin sehingga API bisa membaca foto.`,
+      };
+    }
     return {
       files: [],
       strategy: "none",
-      error: `Folder "${folderInfo.name}" (mimeType: ${folderInfo.mimeType}) accessible tapi 0 file gambar ditemukan. Pastikan folder berisi file gambar (JPG/PNG) dan bukan kosong.`,
+      error: `Folder "${folderInfo.name}" accessible tapi 0 file gambar ditemukan. Pastikan folder berisi file gambar (JPG/PNG) dan bukan kosong.`,
     };
   } catch (err) {
     return { files: [], strategy: "none", error: `Gagal mengecek akses folder: ${err}` };

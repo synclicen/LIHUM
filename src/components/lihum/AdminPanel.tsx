@@ -245,23 +245,17 @@ export default function AdminPanel({
         data.foldersScanned && data.foldersScanned > 1
           ? ` dari ${data.foldersScanned} folder (termasuk subfolder)`
           : "";
-      let extraInfo = "";
+
       if (data.photoCount === 0) {
-        // Show debug info from server (rootFolderError) if available
-        if (data.debug) {
-          extraInfo = ` — ${data.debug}`;
-        } else {
-          const parts = [];
-          if (data.foldersScanned) parts.push(`${data.foldersScanned} folder discan`);
-          if (data.nonImageFilesSkipped) parts.push(`${data.nonImageFilesSkipped} file non-foto dilewati`);
-          if (data.foldersSkipped) parts.push(`${data.foldersSkipped} folder dilewati (no access)`);
-          extraInfo = parts.length
-            ? ` (${parts.join(", ")}). Pastikan folder berisi file gambar (JPG/PNG) dan di-share ke email admin.`
-            : ". Pastikan folder berisi file gambar dan di-share ke email admin (bukan hanya 'Anyone with link').";
-        }
+        // 0 photos — show diagnostic as ERROR (not success)
+        const debugMsg = data.debug || "Folder mungkin hanya di-share via link tanpa akses eksplisit ke email admin.";
+        setErrorMsg(`Sinkronisasi selesai tapi 0 foto ditemukan. ${debugMsg}`);
+        onRefresh();
+        return;
       }
+
       setSuccessMsg(
-        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo} dari Google Drive.${extraInfo}`
+        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo} dari Google Drive.`
       );
       onRefresh();
 
