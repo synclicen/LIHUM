@@ -63,6 +63,10 @@ async function listImagesRecursively(
     // supportsAllDrives + includeItemsFromAllDrives are REQUIRED for folders
     // that live inside Shared Drives (team drives) — without them the API
     // silently returns an empty file list even though the folder is shared.
+    // NOTE: do NOT set corpora=allDrives — for parent-based queries it can
+    // cause the API to return 0 results. The default corpus (user) combined
+    // with includeItemsFromAllDrives already covers both My Drive and
+    // Shared Drive items the user can access.
     let pageToken: string | undefined = undefined;
     do {
       const q = `'${id}' in parents and trashed = false`;
@@ -74,7 +78,6 @@ async function listImagesRecursively(
         pageSize: "1000",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
-        corpora: "allDrives",
       });
       if (pageToken) params.set("pageToken", pageToken);
       const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
@@ -102,6 +105,7 @@ async function listImagesRecursively(
 
       const data: any = await response.json();
       const files: any[] = data.files || [];
+      console.log(`[Sync] Folder ${id} (depth ${depth}): ${files.length} items found`);
 
       for (const file of files) {
         if (file.mimeType === "application/vnd.google-apps.folder") {
@@ -173,6 +177,7 @@ export async function POST(
     // Recursively scan the root folder + all subfolders.
     const scanResult = await listImagesRecursively(token, folderId);
     const scanned = scanResult.results;
+    console.log(`[Sync] Project ${id}: scan complete — ${scanned.length} images, ${scanResult.foldersScanned} folders scanned, ${scanResult.nonImageFilesSkipped} non-image files skipped, ${scanResult.foldersSkipped} folders skipped`);
 
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
       // Prefix photos from subfolders with the subfolder name so the
