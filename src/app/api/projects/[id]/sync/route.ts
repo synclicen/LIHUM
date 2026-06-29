@@ -27,7 +27,13 @@ import {
 async function listImagesRecursively(
   token: string,
   rootFolderId: string
-): Promise<{ file: any; parentName: string; foldersScanned: number; maxDepthReached: number }> {
+): Promise<{
+  results: { file: any; parentName: string }[];
+  foldersScanned: number;
+  maxDepthReached: number;
+  nonImageFilesSkipped: number;
+  foldersSkipped: number;
+}> {
   const results: { file: any; parentName: string }[] = [];
   const visited = new Set<string>([rootFolderId]);
   // Queue of folders to scan: { id, parentName, depth }
@@ -40,6 +46,8 @@ async function listImagesRecursively(
   const MAX_FOLDERS = 1000; // safety cap to prevent runaway scans
   let foldersScanned = 0;
   let maxDepthReached = 0;
+  let nonImageFilesSkipped = 0;
+  let foldersSkipped = 0;
 
   while (queue.length > 0) {
     if (foldersScanned >= MAX_FOLDERS) {
@@ -52,15 +60,24 @@ async function listImagesRecursively(
     if (depth > maxDepthReached) maxDepthReached = depth;
 
     // List items in this folder, handling Drive API pagination.
+    // supportsAllDrives + includeItemsFromAllDrives are REQUIRED for folders
+    // that live inside Shared Drives (team drives) — without them the API
+    // silently returns an empty file list even though the folder is shared.
     let pageToken: string | undefined = undefined;
     do {
       const q = `'${id}' in parents and trashed = false`;
       const fields =
         "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size)";
-      let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        q
-      )}&fields=${encodeURIComponent(fields)}&pageSize=1000`;
-      if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+      const params = new URLSearchParams({
+        q,
+        fields,
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        corpora: "allDrives",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
 
       let response: Response;
       try {
@@ -69,6 +86,7 @@ async function listImagesRecursively(
         });
       } catch (err) {
         console.error(`[Sync] Network error scanning folder ${id}:`, err);
+        foldersSkipped++;
         break; // skip this folder, continue with the rest of the queue
       }
 
@@ -78,6 +96,7 @@ async function listImagesRecursively(
         console.warn(
           `[Sync] Skipping folder ${id} (HTTP ${response.status}): ${errorText.slice(0, 200)}`
         );
+        foldersSkipped++;
         break;
       }
 
@@ -94,6 +113,9 @@ async function listImagesRecursively(
         } else if (file.mimeType && file.mimeType.startsWith("image/")) {
           // Image file — collect it. parentName is the folder it lives in.
           results.push({ file, parentName });
+        } else {
+          // Non-image file (video, document, etc.) — count for diagnostics.
+          nonImageFilesSkipped++;
         }
       }
 
@@ -101,7 +123,7 @@ async function listImagesRecursively(
     } while (pageToken);
   }
 
-  return { file: results, parentName: "", foldersScanned, maxDepthReached } as any;
+  return { results, foldersScanned, maxDepthReached, nonImageFilesSkipped, foldersSkipped };
 }
 
 // POST /api/projects/:id/sync — Admin/Manager only.
@@ -150,9 +172,7 @@ export async function POST(
   try {
     // Recursively scan the root folder + all subfolders.
     const scanResult = await listImagesRecursively(token, folderId);
-    const scanned: { file: any; parentName: string }[] = (scanResult as any).file;
-    const foldersScanned: number = (scanResult as any).foldersScanned;
-    const maxDepthReached: number = (scanResult as any).maxDepthReached;
+    const scanned = scanResult.results;
 
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
       // Prefix photos from subfolders with the subfolder name so the
@@ -193,8 +213,10 @@ export async function POST(
     return NextResponse.json({
       success: true,
       photoCount: mappedPhotos.length,
-      foldersScanned,
-      maxDepthReached,
+      foldersScanned: scanResult.foldersScanned,
+      maxDepthReached: scanResult.maxDepthReached,
+      nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
+      foldersSkipped: scanResult.foldersSkipped,
       photos: mappedPhotos,
       lastSyncedAt,
     });
