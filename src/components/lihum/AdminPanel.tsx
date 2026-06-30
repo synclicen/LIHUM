@@ -245,6 +245,9 @@ export default function AdminPanel({
         data.foldersScanned && data.foldersScanned > 1
           ? ` dari ${data.foldersScanned} folder (termasuk subfolder)`
           : "";
+      const driveInfo = data.isSharedDrive && data.sharedDriveName
+        ? ` dari Shared Drive "${data.sharedDriveName}"`
+        : "";
 
       if (data.photoCount === 0) {
         // 0 photos — show diagnostic as ERROR (not success)
@@ -255,7 +258,7 @@ export default function AdminPanel({
       }
 
       setSuccessMsg(
-        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo} dari Google Drive.`
+        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo}${driveInfo} dari Google Drive.`
       );
       onRefresh();
 

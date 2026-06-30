@@ -7,143 +7,122 @@ import {
   type NewPhotoInput,
 } from "@/lib/queries";
 
+const DRIVE_FIELDS =
+  "files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size, parents)";
+
 /**
- * Lists children of a Drive folder using multiple strategies.
- * Different strategies are needed because:
- *  - My Drive folders: default corpus works
- *  - Shared Drive folders: need supportsAllDrives + includeItemsFromAllDrives
- *  - Shared Drive root: may need corpora=drive + driveId
- *  - Link-shared folders not owned by user: API may return 0 even if web UI works
- *
- * Returns the raw file list + which strategy succeeded.
+ * Checks if the given ID is a Shared Drive (Team Drive).
+ * Returns the drive name if yes, null if no.
+ */
+async function checkIsSharedDrive(
+  token: string,
+  id: string
+): Promise<{ isSharedDrive: boolean; name?: string }> {
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/drives/${id}?fields=id,name`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.ok) {
+      const data: any = await res.json();
+      return { isSharedDrive: true, name: data.name };
+    }
+  } catch {
+    /* not a shared drive */
+  }
+  return { isSharedDrive: false };
+}
+
+/**
+ * Lists ALL image files in a Shared Drive in one flat query (with pagination).
+ * This gets every image across all folders/subfolders in the shared drive.
+ */
+async function listAllImagesInSharedDrive(
+  token: string,
+  driveId: string
+): Promise<{ files: any[]; error?: string }> {
+  const allFiles: any[] = [];
+  let pageToken: string | undefined = undefined;
+
+  do {
+    const params = new URLSearchParams({
+      corpora: "drive",
+      driveId,
+      q: "mimeType contains 'image/' and trashed = false",
+      fields: `nextPageToken, ${DRIVE_FIELDS}`,
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return {
+        files: allFiles,
+        error: `Gagal query Shared Drive (HTTP ${res.status}): ${errText.slice(0, 200)}`,
+      };
+    }
+
+    const data: any = await res.json();
+    const files: any[] = data.files || [];
+    allFiles.push(...files);
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return { files: allFiles };
+}
+
+/**
+ * Lists children of a regular folder (My Drive or subfolder inside Shared Drive).
+ * Tries multiple strategies for robustness.
  */
 async function listFolderChildren(
   token: string,
-  folderId: string
+  folderId: string,
+  driveId?: string
 ): Promise<{ files: any[]; strategy: string; error?: string }> {
-  const fields =
-    "nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size)";
-
-  // Strategy 1: default corpus (user) + shared drive support
-  const strategies: { name: string; params: URLSearchParams }[] = [
-    new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields,
-      pageSize: "1000",
-      supportsAllDrives: "true",
-      includeItemsFromAllDrives: "true",
-    }),
-    // Strategy 2: corpora=allDrives (search across all drives the user can access)
-    new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields,
-      pageSize: "1000",
-      supportsAllDrives: "true",
-      includeItemsFromAllDrives: "true",
-      corpora: "allDrives",
-    }),
-    // Strategy 3: corpora=drive + driveId (if folderId is a Shared Drive root)
-    new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields,
-      pageSize: "1000",
-      supportsAllDrives: "true",
-      includeItemsFromAllDrives: "true",
-      corpora: "drive",
-      driveId: folderId,
-    }),
-  ];
-
-  for (const strategy of strategies) {
-    const url = `https://www.googleapis.com/drive/v3/files?${strategy.params.toString()}`;
-    try {
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(
-          `[Sync] Strategy "${strategy.name}" failed (HTTP ${response.status}): ${errorText.slice(0, 150)}`
-        );
-        continue;
-      }
-      const data: any = await response.json();
-      const files: any[] = data.files || [];
-      if (files.length > 0) {
-        return { files, strategy: strategy.name };
-      }
-    } catch (err) {
-      console.warn(`[Sync] Strategy "${strategy.name}" error:`, err);
-    }
+  const params = new URLSearchParams({
+    q: `'${folderId}' in parents and trashed = false`,
+    fields: `nextPageToken, ${DRIVE_FIELDS}`,
+    pageSize: "1000",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  // If we know the driveId (inside a shared drive), scope the query to that drive
+  if (driveId) {
+    params.set("corpora", "drive");
+    params.set("driveId", driveId);
   }
 
-  // All strategies returned 0 files. Diagnose why:
-  // 1. Is it a Shared Drive? (drives.get)
-  // 2. Is it a regular folder? (files.get with full fields)
-  // 3. Is it accessible at all?
-
-  // Check if folderId is a Shared Drive ID
+  const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
   try {
-    const driveCheckUrl = `https://www.googleapis.com/drive/v3/drives/${folderId}?fields=id,name`;
-    const driveCheckRes = await fetch(driveCheckUrl, {
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (driveCheckRes.ok) {
-      const driveInfo: any = await driveCheckRes.json();
+    if (!res.ok) {
+      const errText = await res.text();
       return {
         files: [],
         strategy: "none",
-        error: `Folder "${driveInfo.name}" adalah Shared Drive (Team Drive). Admin harus ditambahkan sebagai ANGGOTA Shared Drive oleh pemiliknya agar API bisa membaca isi. Link sharing "Anyone with link" TIDAK cukup untuk akses API pada Shared Drive. Solusi: minta pemilik Shared Drive menambahkan email admin sebagai member, ATAU pindahkan foto ke folder biasa di My Drive dan share ke email admin.`,
+        error: `HTTP ${res.status}: ${errText.slice(0, 150)}`,
       };
     }
-  } catch {
-    // Not a shared drive, continue to files.get check
-  }
-
-  // Check if it's a regular folder accessible with this token
-  try {
-    const checkUrl = `https://www.googleapis.com/drive/v3/files/${folderId}?supportsAllDrives=true&fields=id,name,mimeType,shared,driveId`;
-    const checkRes = await fetch(checkUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!checkRes.ok) {
-      const errText = await checkRes.text();
-      return {
-        files: [],
-        strategy: "none",
-        error: `Folder tidak dapat diakses dengan token admin (HTTP ${checkRes.status}). Folder di-share via "Anyone with link" tetapi email admin belum ditambahkan secara eksplisit. Solusi: buka folder di Google Drive, klik "Add shortcut to Drive" atau minta pemilik share ke email admin. Detail: ${errText.slice(0, 150)}`,
-      };
-    }
-    const folderInfo: any = await checkRes.json();
-    // If folder has driveId, it's inside a Shared Drive
-    if (folderInfo.driveId) {
-      return {
-        files: [],
-        strategy: "none",
-        error: `Folder "${folderInfo.name}" berada di dalam Shared Drive. Admin belum terdaftar sebagai anggota Shared Drive tersebut. Link sharing tidak cukup untuk akses API. Solusi: minta pemilik Shared Drive menambahkan email admin sebagai member.`,
-      };
-    }
-    // Regular folder but 0 files — maybe link sharing only (not explicit share)
-    if (folderInfo.shared) {
-      return {
-        files: [],
-        strategy: "none",
-        error: `Folder "${folderInfo.name}" di-share via link, tetapi API tidak bisa list isi folder. Solusi: buka folder di Google Drive (via link), klik tombol "Add shortcut to Drive" atau "Add to My Drive" — ini memberi akses eksplisit ke akun admin sehingga API bisa membaca foto.`,
-      };
-    }
-    return {
-      files: [],
-      strategy: "none",
-      error: `Folder "${folderInfo.name}" accessible tapi 0 file gambar ditemukan. Pastikan folder berisi file gambar (JPG/PNG) dan bukan kosong.`,
-    };
+    const data: any = await res.json();
+    return { files: data.files || [], strategy: driveId ? "drive-scoped" : "default" };
   } catch (err) {
-    return { files: [], strategy: "none", error: `Gagal mengecek akses folder: ${err}` };
+    return { files: [], strategy: "none", error: String(err) };
   }
 }
 
 /**
- * Recursively scans a Drive folder and all subfolders for images.
- * Uses the multi-strategy listFolderChildren for each folder.
+ * Recursively scans a folder tree for images.
+ * If the root is a Shared Drive, uses flat query instead of recursive traversal.
  */
 async function listImagesRecursively(
   token: string,
@@ -156,10 +135,51 @@ async function listImagesRecursively(
   foldersSkipped: number;
   rootFolderError?: string;
   rootStrategy?: string;
+  isSharedDrive?: boolean;
+  sharedDriveName?: string;
 }> {
+  // Step 1: Check if rootFolderId is a Shared Drive
+  const driveCheck = await checkIsSharedDrive(token, rootFolderId);
+
+  if (driveCheck.isSharedDrive) {
+    console.log(`[Sync] Root is Shared Drive: "${driveCheck.name}" — using flat query`);
+    // Shared Drive → list ALL images in one flat query (across all subfolders)
+    const { files, error } = await listAllImagesInSharedDrive(token, rootFolderId);
+    console.log(`[Sync] Shared Drive "${driveCheck.name}": ${files.length} images found`);
+
+    if (files.length === 0 && error) {
+      return {
+        results: [],
+        foldersScanned: 0,
+        maxDepthReached: 0,
+        nonImageFilesSkipped: 0,
+        foldersSkipped: 0,
+        rootFolderError: error,
+        rootStrategy: "shared-drive-flat",
+        isSharedDrive: true,
+        sharedDriveName: driveCheck.name,
+      };
+    }
+
+    // For shared drive flat query, parentName is empty (we don't know which
+    // subfolder each photo came from, but that's OK — all photos are captured)
+    return {
+      results: files.map((file) => ({ file, parentName: "" })),
+      foldersScanned: 1,
+      maxDepthReached: 0,
+      nonImageFilesSkipped: 0,
+      foldersSkipped: 0,
+      rootStrategy: "shared-drive-flat",
+      isSharedDrive: true,
+      sharedDriveName: driveCheck.name,
+    };
+  }
+
+  // Step 2: Regular folder → recursive BFS traversal
+  console.log(`[Sync] Root is regular folder — recursive traversal`);
   const results: { file: any; parentName: string }[] = [];
   const visited = new Set<string>([rootFolderId]);
-  const queue: { id: string; parentName: string; depth: number }[] = [
+  const queue: { id: string; parentName: string; depth: number; driveId?: string }[] = [
     { id: rootFolderId, parentName: "", depth: 0 },
   ];
 
@@ -171,19 +191,27 @@ async function listImagesRecursively(
   let foldersSkipped = 0;
   let rootFolderError: string | undefined;
   let rootStrategy: string | undefined;
+  let detectedDriveId: string | undefined;
 
   while (queue.length > 0) {
     if (foldersScanned >= MAX_FOLDERS) break;
 
-    const { id, parentName, depth } = queue.shift()!;
+    const { id, parentName, depth, driveId } = queue.shift()!;
     foldersScanned++;
     if (depth > maxDepthReached) maxDepthReached = depth;
 
-    const { files, strategy, error } = await listFolderChildren(token, id);
+    const { files, strategy, error } = await listFolderChildren(token, id, driveId || detectedDriveId);
 
     if (depth === 0) {
       rootStrategy = strategy;
       if (error) rootFolderError = error;
+      // Detect driveId from returned files (if inside a shared drive)
+      for (const f of files) {
+        if (f.driveId) {
+          detectedDriveId = f.driveId;
+          break;
+        }
+      }
     }
 
     if (error && files.length === 0) {
@@ -191,13 +219,18 @@ async function listImagesRecursively(
       continue;
     }
 
-    console.log(`[Sync] Folder ${id} (depth ${depth}, strategy "${strategy}"): ${files.length} items`);
+    console.log(`[Sync] Folder ${id} (depth ${depth}): ${files.length} items`);
 
     for (const file of files) {
+      // Detect driveId from any file
+      if (file.driveId && !detectedDriveId) {
+        detectedDriveId = file.driveId;
+      }
+
       if (file.mimeType === "application/vnd.google-apps.folder") {
         if (depth + 1 <= MAX_DEPTH && !visited.has(file.id)) {
           visited.add(file.id);
-          queue.push({ id: file.id, parentName: file.name, depth: depth + 1 });
+          queue.push({ id: file.id, parentName: file.name, depth: depth + 1, driveId: detectedDriveId });
         }
       } else if (file.mimeType && file.mimeType.startsWith("image/")) {
         results.push({ file, parentName });
@@ -207,7 +240,52 @@ async function listImagesRecursively(
     }
   }
 
-  return { results, foldersScanned, maxDepthReached, nonImageFilesSkipped, foldersSkipped, rootFolderError, rootStrategy };
+  // If regular folder returned 0, diagnose
+  if (results.length === 0 && !rootFolderError) {
+    // Check folder accessibility
+    try {
+      const checkRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${rootFolderId}?supportsAllDrives=true&fields=id,name,mimeType,shared,driveId`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!checkRes.ok) {
+        rootFolderError = `Folder tidak dapat diakses dengan token ini (HTTP ${checkRes.status}). Email yang login mungkin tidak punya akses ke folder.`;
+      } else {
+        const info: any = await checkRes.json();
+        if (info.driveId) {
+          // It's inside a shared drive but we got 0 — try flat query on the drive
+          console.log(`[Sync] Folder inside Shared Drive ${info.driveId} — trying flat query`);
+          const flatResult = await listAllImagesInSharedDrive(token, info.driveId);
+          if (flatResult.files.length > 0) {
+            return {
+              results: flatResult.files.map((file) => ({ file, parentName: "" })),
+              foldersScanned: 1,
+              maxDepthReached: 0,
+              nonImageFilesSkipped: 0,
+              foldersSkipped: 0,
+              rootStrategy: "shared-drive-flat-fallback",
+              isSharedDrive: true,
+              sharedDriveName: info.name,
+            };
+          }
+        }
+        rootFolderError = `Folder "${info.name}" accessible tapi 0 file gambar. Pastikan folder berisi file gambar (JPG/PNG).`;
+      }
+    } catch (err) {
+      rootFolderError = `Gagal mengecek folder: ${err}`;
+    }
+  }
+
+  return {
+    results,
+    foldersScanned,
+    maxDepthReached,
+    nonImageFilesSkipped,
+    foldersSkipped,
+    rootFolderError,
+    rootStrategy,
+    isSharedDrive: false,
+  };
 }
 
 // POST /api/projects/:id/sync — Admin/Manager only.
@@ -230,8 +308,7 @@ export async function POST(
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return NextResponse.json(
       {
-        error:
-          "Token otorisasi Google tidak ditemukan. Silakan masuk (Login) Admin terlebih dahulu.",
+        error: "Token otorisasi Google tidak ditemukan. Silakan masuk (Login) Admin terlebih dahulu.",
       },
       { status: 401 }
     );
@@ -254,18 +331,14 @@ export async function POST(
   try {
     const scanResult = await listImagesRecursively(token, folderId);
     const scanned = scanResult.results;
-    console.log(`[Sync] Project ${id}: user=${userEmail}, ${scanned.length} images, strategy="${scanResult.rootStrategy}", foldersScanned=${scanResult.foldersScanned}, nonImage=${scanResult.nonImageFilesSkipped}, skipped=${scanResult.foldersSkipped}`);
+    console.log(`[Sync] Project ${id}: user=${userEmail}, ${scanned.length} images, strategy="${scanResult.rootStrategy}", sharedDrive=${scanResult.isSharedDrive}`);
 
-    // If 0 photos, prepend the syncing user's email to the error message
-    // so the admin knows WHICH Google account tried to access the folder.
     if (scanned.length === 0 && scanResult.rootFolderError) {
-      scanResult.rootFolderError = `Email yang sedang login: ${userEmail}. ${scanResult.rootFolderError}`;
+      scanResult.rootFolderError = `Email login: ${userEmail}. ${scanResult.rootFolderError}`;
     }
 
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
-      const displayName = parentName
-        ? `${parentName} — ${file.name}`
-        : file.name;
+      const displayName = parentName ? `${parentName} — ${file.name}` : file.name;
 
       let sizeFormatted = "Unknown";
       if (file.size) {
@@ -289,7 +362,6 @@ export async function POST(
     });
 
     const lastSyncedAt = new Date().toISOString();
-
     await replaceProjectPhotos(id, mappedPhotos);
     await updateProjectSync(id, mappedPhotos.length, lastSyncedAt);
 
@@ -301,6 +373,8 @@ export async function POST(
       nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
       foldersSkipped: scanResult.foldersSkipped,
       rootStrategy: scanResult.rootStrategy,
+      isSharedDrive: scanResult.isSharedDrive,
+      sharedDriveName: scanResult.sharedDriveName,
       debug: scanResult.rootFolderError || undefined,
       photos: mappedPhotos,
       lastSyncedAt,
@@ -308,11 +382,7 @@ export async function POST(
   } catch (err: any) {
     console.error("Drive Sync Error:", err);
     return NextResponse.json(
-      {
-        error:
-          err.message ||
-          "Gagal sinkronisasi Google Drive. Pastikan folder tersebut dibagikan (public) dan akun Anda memiliki izin.",
-      },
+      { error: err.message || "Gagal sinkronisasi Google Drive." },
       { status: 500 }
     );
   }
