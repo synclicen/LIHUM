@@ -65,3 +65,4 @@ server.log
 /skills/
 # User uploaded screenshots (for reference only, not part of the app)
 /upload/
+.zscripts/dev.pid
