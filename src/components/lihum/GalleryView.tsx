@@ -156,7 +156,7 @@ export default function GalleryView({
       }
     };
 
-    const intervalId = setInterval(fetchUpdates, 10000);
+    const intervalId = setInterval(fetchUpdates, 15000);
     return () => clearInterval(intervalId);
   }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, sortBy]);
 
