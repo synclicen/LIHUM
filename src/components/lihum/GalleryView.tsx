@@ -301,7 +301,7 @@ export default function GalleryView({
                 Tidak punya password?
               </p>
               <p className="text-[10px] text-[#D4AF37]/80 font-mono">
-                Hubungi Admin: synclicen@gmail.com
+                Hubungi Admin
               </p>
             </div>
           </div>
