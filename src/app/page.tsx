@@ -174,6 +174,17 @@ export default function App() {
     }
   };
 
+  // Click logo → go back to home (clear gallery selection + URL params)
+  const handleLogoClick = () => {
+    setSelectedProjectId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("gallery");
+    url.searchParams.delete("project");
+    window.history.pushState({}, "", url.toString());
+    loadProjects();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   // Polling for latest metadata so that public visitors automatically get synced updates
   useEffect(() => {
     const fetchMetadataInterval = setInterval(() => {
@@ -285,6 +296,7 @@ export default function App() {
         isAdminMode={isAdminMode}
         setIsAdminMode={setIsAdminMode}
         role={role}
+        onLogoClick={handleLogoClick}
       />
 
       {/* Main Core Area */}

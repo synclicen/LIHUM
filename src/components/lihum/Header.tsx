@@ -11,6 +11,7 @@ interface HeaderProps {
   isAdminMode: boolean;
   setIsAdminMode: (mode: boolean) => void;
   role?: "admin" | "manager" | null;
+  onLogoClick?: () => void;
 }
 
 export default function Header({
@@ -20,13 +21,20 @@ export default function Header({
   isAdminMode,
   setIsAdminMode,
   role,
+  onLogoClick,
 }: HeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-[#4C2A85] border-b border-[#D4AF37]/30 shadow-xl shrink-0">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        {/* Brand Logo with Sleek Interface Style */}
-        <div className="flex items-center gap-3 select-none">
-          <div className="w-10 h-10 bg-[#D4AF37] rounded-lg flex items-center justify-center shadow-lg transform transition-transform hover:scale-105">
+        {/* Brand Logo — clickable to go back to home */}
+        <button
+          type="button"
+          onClick={onLogoClick}
+          className="flex items-center gap-3 select-none cursor-pointer group"
+          title="Kembali ke halaman utama"
+          aria-label="Kembali ke halaman utama"
+        >
+          <div className="w-10 h-10 bg-[#D4AF37] rounded-lg flex items-center justify-center shadow-lg transform transition-transform group-hover:scale-105 group-active:scale-95">
             <svg
               className="w-6 h-6 text-[#4C2A85]"
               fill="none"
@@ -41,15 +49,15 @@ export default function Header({
               />
             </svg>
           </div>
-          <div>
-            <span className="text-white font-bold text-lg tracking-tight uppercase">
+          <div className="text-left">
+            <span className="text-white font-bold text-lg tracking-tight uppercase group-hover:text-[#D4AF37] transition-colors">
               LIHUM
             </span>
             <div className="text-[9px] text-[#D4AF37]/80 uppercase font-mono tracking-widest leading-none">
               Lihat, Unduh Mandiri!
             </div>
           </div>
-        </div>
+        </button>
 
         {/* Action Controls & Badges */}
         <div className="flex items-center space-x-3">
