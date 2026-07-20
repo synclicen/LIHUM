@@ -110,6 +110,7 @@ export default function GalleryView({
         console.error(err);
       } finally {
         setLoading(false);
+        setPasswordVerifying(false);
       }
     };
 
@@ -163,15 +164,16 @@ export default function GalleryView({
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!passwordInput.trim()) return;
+    // Keep passwordVerifying=true until the fetch effect completes
+    // (it sets passwordVerifying=false in its finally block).
+    // Also set loading=true so the UI shows a spinner immediately.
     setPasswordVerifying(true);
-    // Set the unlockedPassword — the fetch effect will re-run automatically
-    // and verify it against the server.
+    setLoading(true);
     sessionStorage.setItem(
       `lihum:gallery-password:${projectId}`,
       passwordInput.trim()
     );
     setUnlockedPassword(passwordInput.trim());
-    setPasswordVerifying(false);
   };
 
   const clearSearch = () => {
@@ -278,14 +280,18 @@ export default function GalleryView({
                 placeholder="Masukkan password galeri..."
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}
-                className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all text-center font-mono"
+                disabled={passwordVerifying}
+                className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all text-center font-mono disabled:opacity-50"
                 autoComplete="off"
               />
               <button
                 type="submit"
                 disabled={passwordVerifying || !passwordInput.trim()}
-                className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
+                className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-70 shadow-md flex items-center justify-center gap-2"
               >
+                {passwordVerifying && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                )}
                 {passwordVerifying ? "Memverifikasi..." : "Buka Galeri"}
               </button>
             </form>
