@@ -295,19 +295,26 @@ export async function updateProjectSync(
 // ---------- Photos ----------
 /**
  * Atomically replaces all photos for a project.
- * Runs delete + inserts in a single libSQL batch/transaction.
+ * Deletes existing photos first, then inserts new ones in chunks of 500
+ * to avoid hitting Turso/libSQL batch size limits (which can silently
+ * truncate large batches of 2000+ statements).
  */
 export async function replaceProjectPhotos(
   projectId: string,
   photos: NewPhotoInput[]
 ): Promise<void> {
-  const stmts: { sql: string; args: unknown[] }[] = [
-    { sql: "DELETE FROM Photo WHERE projectId = ?", args: [projectId] },
-  ];
-  for (const p of photos) {
-    stmts.push({
-      sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  // Step 1: Delete all existing photos for this project
+  await db.execute({ sql: "DELETE FROM Photo WHERE projectId = ?", args: [projectId] });
+
+  // Step 2: Insert new photos in chunks of 500
+  const CHUNK_SIZE = 500;
+  const insertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+  for (let i = 0; i < photos.length; i += CHUNK_SIZE) {
+    const chunk = photos.slice(i, i + CHUNK_SIZE);
+    const stmts = chunk.map((p) => ({
+      sql: insertSql,
       args: [
         p.id,
         p.name,
@@ -319,9 +326,9 @@ export async function replaceProjectPhotos(
         p.modifiedTime,
         projectId,
       ],
-    });
+    }));
+    await db.batch(stmts);
   }
-  await db.batch(stmts);
 }
 
 /**
@@ -340,22 +347,28 @@ export async function addProjectPhotos(
   photos: NewPhotoInput[]
 ): Promise<void> {
   if (photos.length === 0) return;
-  const stmts = photos.map((p) => ({
-    sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      p.id,
-      p.name,
-      p.mimeType,
-      p.thumbnailLink,
-      p.webContentLink,
-      p.size,
-      p.createdTime,
-      p.modifiedTime,
-      projectId,
-    ],
-  }));
-  await db.batch(stmts);
+  const insertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const CHUNK_SIZE = 500;
+
+  for (let i = 0; i < photos.length; i += CHUNK_SIZE) {
+    const chunk = photos.slice(i, i + CHUNK_SIZE);
+    const stmts = chunk.map((p) => ({
+      sql: insertSql,
+      args: [
+        p.id,
+        p.name,
+        p.mimeType,
+        p.thumbnailLink,
+        p.webContentLink,
+        p.size,
+        p.createdTime,
+        p.modifiedTime,
+        projectId,
+      ],
+    }));
+    await db.batch(stmts);
+  }
 }
 
 // ---------- Accounts ----------

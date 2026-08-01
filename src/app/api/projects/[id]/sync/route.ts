@@ -87,37 +87,47 @@ async function listFolderChildren(
   folderId: string,
   driveId?: string
 ): Promise<{ files: any[]; strategy: string; error?: string }> {
-  const params = new URLSearchParams({
-    q: `'${folderId}' in parents and trashed = false`,
-    fields: `nextPageToken, ${DRIVE_FIELDS}`,
-    pageSize: "1000",
-    supportsAllDrives: "true",
-    includeItemsFromAllDrives: "true",
-  });
-  // If we know the driveId (inside a shared drive), scope the query to that drive
-  if (driveId) {
-    params.set("corpora", "drive");
-    params.set("driveId", driveId);
-  }
+  const allFiles: any[] = [];
+  let pageToken: string | undefined = undefined;
 
-  const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: `nextPageToken, ${DRIVE_FIELDS}`,
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
     });
-    if (!res.ok) {
-      const errText = await res.text();
-      return {
-        files: [],
-        strategy: "none",
-        error: `HTTP ${res.status}: ${errText.slice(0, 150)}`,
-      };
+    // If we know the driveId (inside a shared drive), scope the query to that drive
+    if (driveId) {
+      params.set("corpora", "drive");
+      params.set("driveId", driveId);
     }
-    const data: any = await res.json();
-    return { files: data.files || [], strategy: driveId ? "drive-scoped" : "default" };
-  } catch (err) {
-    return { files: [], strategy: "none", error: String(err) };
-  }
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        return {
+          files: allFiles,
+          strategy: "none",
+          error: `HTTP ${res.status}: ${errText.slice(0, 150)}`,
+        };
+      }
+      const data: any = await res.json();
+      const files: any[] = data.files || [];
+      allFiles.push(...files);
+      pageToken = data.nextPageToken;
+    } catch (err) {
+      return { files: allFiles, strategy: "none", error: String(err) };
+    }
+  } while (pageToken);
+
+  return { files: allFiles, strategy: driveId ? "drive-scoped" : "default" };
 }
 
 /**
@@ -276,6 +286,7 @@ async function listImagesRecursively(
     }
   }
 
+  console.log(`[Sync] Recursive scan done: ${results.length} images total, ${foldersScanned} folders scanned`);
   return {
     results,
     foldersScanned,
