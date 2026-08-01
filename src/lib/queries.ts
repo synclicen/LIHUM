@@ -294,40 +294,80 @@ export async function updateProjectSync(
 
 // ---------- Photos ----------
 /**
- * Atomically replaces all photos for a project.
- * Deletes existing photos first, then inserts new ones in chunks of 500
- * to avoid hitting Turso/libSQL batch size limits (which can silently
- * truncate large batches of 2000+ statements).
+ * Replaces all photos for a project WITHOUT a "zero photos" window.
+ *
+ * The old implementation did DELETE-all-then-INSERT. During the gap between
+ * DELETE and the chunked INSERTs finishing, concurrent GET requests would
+ * see 0 photos — bad UX when thousands of visitors are polling every 15s
+ * and auto-sync runs every 30s.
+ *
+ * New strategy (swap-free, no empty window):
+ *  1. UPSERT all new photos (INSERT OR REPLACE) in chunks — old photos that
+ *     still exist in the new batch keep their row; new photos are added.
+ *     During this phase the gallery shows either old OR new data — never empty.
+ *  2. DELETE only the photos that are NOT in the new batch — i.e. photos that
+ *     were removed from Google Drive since last sync. This runs AFTER all
+ *     upserts complete, so the gallery always has photos during the operation.
+ *
+ * This makes the sync effectively atomic from the visitor's perspective.
  */
 export async function replaceProjectPhotos(
   projectId: string,
   photos: NewPhotoInput[]
 ): Promise<void> {
-  // Step 1: Delete all existing photos for this project
-  await db.execute({ sql: "DELETE FROM Photo WHERE projectId = ?", args: [projectId] });
-
-  // Step 2: Insert new photos in chunks of 500
   const CHUNK_SIZE = 500;
-  const insertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+  // INSERT OR REPLACE so existing rows (same id+projectId) are updated in place
+  // instead of failing on PRIMARY KEY conflict.
+  const upsertSql = `INSERT OR REPLACE INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
+  // Step 1: Upsert all new photos in chunks.
+  // During this phase, the gallery shows the previous data + newly added photos.
+  const newIds = new Set<string>();
   for (let i = 0; i < photos.length; i += CHUNK_SIZE) {
     const chunk = photos.slice(i, i + CHUNK_SIZE);
-    const stmts = chunk.map((p) => ({
-      sql: insertSql,
-      args: [
-        p.id,
-        p.name,
-        p.mimeType,
-        p.thumbnailLink,
-        p.webContentLink,
-        p.size,
-        p.createdTime,
-        p.modifiedTime,
-        projectId,
-      ],
-    }));
+    const stmts = chunk.map((p) => {
+      newIds.add(p.id);
+      return {
+        sql: upsertSql,
+        args: [
+          p.id,
+          p.name,
+          p.mimeType,
+          p.thumbnailLink,
+          p.webContentLink,
+          p.size,
+          p.createdTime,
+          p.modifiedTime,
+          projectId,
+        ],
+      };
+    });
     await db.batch(stmts);
+  }
+
+  // Step 2: Delete only photos that are NOT in the new batch.
+  // This runs AFTER all upserts, so the gallery never appears empty.
+  // We fetch existing IDs first, compute the diff, then delete in chunks.
+  const existing = await db.execute({
+    sql: "SELECT id FROM Photo WHERE projectId = ?",
+    args: [projectId],
+  });
+  const existingIds = existing.rows.map((r) => String((r as Record<string, unknown>).id));
+  const toDelete = existingIds.filter((id) => !newIds.has(id));
+
+  if (toDelete.length > 0) {
+    // DELETE in chunks using individual statements (libSQL doesn't support
+    // array binding for IN clause; chunk to avoid batch size limits).
+    const deleteSql = "DELETE FROM Photo WHERE projectId = ? AND id = ?";
+    for (let i = 0; i < toDelete.length; i += CHUNK_SIZE) {
+      const chunk = toDelete.slice(i, i + CHUNK_SIZE);
+      const stmts = chunk.map((photoId) => ({
+        sql: deleteSql,
+        args: [projectId, photoId],
+      }));
+      await db.batch(stmts);
+    }
   }
 }
 

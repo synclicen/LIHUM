@@ -348,6 +348,20 @@ export async function POST(
       scanResult.rootFolderError = `Email login: ${userEmail}. ${scanResult.rootFolderError}`;
     }
 
+    // SAFETY GUARD: If scan returned 0 photos (Drive API error, permission
+    // issue, transient failure), DO NOT replace existing photos. Keep the
+    // last known good state so the gallery doesn't suddenly show "0 photos"
+    // to thousands of concurrent visitors. Return the diagnostic instead.
+    if (scanned.length === 0) {
+      console.warn(`[Sync] Project ${id}: 0 photos found — keeping existing photos, not replacing`);
+      return NextResponse.json({
+        success: false,
+        photoCount: 0,
+        debug: scanResult.rootFolderError || "Scan mengembalikan 0 foto. Foto yang ada dipertahankan.",
+        lastSyncedAt: new Date().toISOString(),
+      });
+    }
+
     const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
       const displayName = parentName ? `${parentName} — ${file.name}` : file.name;
 
