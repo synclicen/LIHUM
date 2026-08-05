@@ -455,17 +455,18 @@ export default function GalleryView({
                         }}
                         className="group flex flex-col h-full bg-white text-slate-800 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden justify-between transition-all duration-300 hover:translate-y-[-4px]"
                       >
-                        {/* Photo Box */}
+                        {/* Photo Box — shows full image in any aspect ratio */}
                         <div
-                          className="relative bg-slate-100 overflow-hidden cursor-pointer select-none"
+                          className="relative bg-slate-100 overflow-hidden cursor-pointer select-none flex items-center justify-center"
                           style={{ aspectRatio: "3 / 2" }}
                           onClick={() => setActivePhoto(photo)}
                         >
-                          {/* Image display */}
+                          {/* Image display — object-contain shows the full photo
+                              without cropping, regardless of portrait/landscape. */}
                           <img
                             src={imageProxySrc}
                             alt={photo.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500"
+                            className="w-full h-full object-contain group-hover:scale-105 transition-all duration-500"
                             loading="lazy"
                           />
 
@@ -557,13 +558,12 @@ export default function GalleryView({
               <div className="grid grid-cols-1 lg:grid-cols-12">
                 {/* Photo canvas - left */}
                 <div
-                  className="lg:col-span-8 bg-slate-950 flex items-center justify-center relative group"
-                  style={{ aspectRatio: "3 / 2" }}
+                  className="lg:col-span-8 bg-slate-950 flex items-center justify-center relative group p-2"
                 >
                   <img
                     src={`/api/photo-proxy?id=${activePhoto.id}&size=full`}
                     alt={activePhoto.name}
-                    className="max-h-[70vh] object-contain max-w-full"
+                    className="max-h-[75vh] object-contain max-w-full"
                   />
                 </div>
 
