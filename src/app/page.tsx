@@ -497,6 +497,11 @@ export default function App() {
                     yang dibagikan.
                   </p>
                 </div>
+                {!loading && projects.filter((p) => !p.isHidden).length > 0 && (
+                  <span className="text-xs bg-[#120A21] text-[#D4AF37] border border-[#D4AF37]/30 py-1.5 px-3 rounded-full font-mono font-bold shrink-0">
+                    {projects.filter((p) => !p.isHidden).length} Galeri Tersedia
+                  </span>
+                )}
               </div>
 
               {loading ? (
