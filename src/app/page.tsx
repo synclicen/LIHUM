@@ -185,11 +185,16 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Polling for latest metadata so that public visitors automatically get synced updates
+  // Polling for latest metadata. 30s interval (not 15s) to reduce Cloudflare
+  // Workers request volume on free tier — important when thousands of visitors
+  // are online simultaneously. Only polls when the tab is visible (saves
+  // requests when user is on another tab).
   useEffect(() => {
     const fetchMetadataInterval = setInterval(() => {
-      loadProjects();
-    }, 15000);
+      if (document.visibilityState === "visible") {
+        loadProjects();
+      }
+    }, 30000);
 
     return () => clearInterval(fetchMetadataInterval);
   }, []);

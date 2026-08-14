@@ -41,6 +41,12 @@ export default function GalleryView({
   const [activePhoto, setActivePhoto] = useState<Photo | null>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
+  // Pagination — only render a subset of photos to avoid loading 1700+ images
+  // at once (which causes Cloudflare Workers rate limiting on free tier).
+  // Load 40 initially, then 40 more when user scrolls near the bottom.
+  const PAGE_SIZE = 40;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
   // Password state for private galleries
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordVerifying, setPasswordVerifying] = useState(false);
@@ -80,6 +86,24 @@ export default function GalleryView({
     };
   }, [searchQuery]);
 
+  // Reset pagination when project, search, or sort changes
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [projectId, debouncedQuery, sortBy, unlockedPassword]);
+
+  // Auto-load more photos when user scrolls near the bottom of the grid
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    // Load more when user is within 300px of the bottom
+    if (scrollHeight - scrollTop - clientHeight < 300 && project) {
+      const totalPhotos = project.photos?.length || 0;
+      if (visibleCount < totalPhotos) {
+        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalPhotos));
+      }
+    }
+  };
+
   // Build the fetch URL with optional password + search query + sort
   const buildFetchUrl = (search: string) => {
     const params = new URLSearchParams();
@@ -117,10 +141,13 @@ export default function GalleryView({
     fetchProjectDetails();
   }, [projectId, debouncedQuery, unlockedPassword, userEmail, sortBy]);
 
-  // Dynamic automatic polling to detect additions, deletions, or changes instantly
+  // Dynamic automatic polling to detect additions, deletions, or changes.
+  // DISABLED for large galleries (>200 photos) to avoid Cloudflare Workers
+  // rate limiting on free tier. Visitors to large galleries can refresh
+  // manually to see new photos. Small galleries still poll every 30s.
   useEffect(() => {
-    // Don't poll if the gallery is locked (waiting for password)
     if (project?.requiresPassword) return;
+    if ((project?.photoCount || 0) > 200) return;
 
     const fetchUpdates = async () => {
       try {
@@ -156,9 +183,9 @@ export default function GalleryView({
       }
     };
 
-    const intervalId = setInterval(fetchUpdates, 15000);
+    const intervalId = setInterval(fetchUpdates, 30000);
     return () => clearInterval(intervalId);
-  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, sortBy]);
+  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, project?.photoCount, sortBy]);
 
   // Handle password submission for private galleries
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -390,6 +417,7 @@ export default function GalleryView({
           {/* Results Display */}
           <div
             ref={scrollContainerRef}
+            onScroll={handleScroll}
             className="flex-grow min-h-0 overflow-y-auto pr-1 select-none custom-scrollbar pb-6 pt-1"
           >
             {loading ? (
@@ -433,12 +461,13 @@ export default function GalleryView({
                 )}
               </div>
             ) : (
+              <>
               <motion.div
                 layout
                 className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6"
               >
                 <AnimatePresence mode="popLayout">
-                  {project.photos.map((photo, index) => {
+                  {project.photos.slice(0, visibleCount).map((photo, index) => {
                     const cleanName = formatPhotoName(photo.name);
                     const imageProxySrc = `/api/photo-proxy?id=${photo.id}`;
 
@@ -524,6 +553,27 @@ export default function GalleryView({
                   })}
                 </AnimatePresence>
               </motion.div>
+
+              {/* Load More button — shown when there are more photos to display */}
+              {visibleCount < (project.photos?.length || 0) && (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <p className="text-xs text-slate-400 font-mono">
+                    Menampilkan {visibleCount} dari {project.photos.length} foto
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleCount((prev) =>
+                        Math.min(prev + PAGE_SIZE, project.photos.length)
+                      )
+                    }
+                    className="px-6 py-2.5 rounded-xl bg-[#4C2A85] border border-[#D4AF37]/35 hover:bg-[#5a329d] hover:border-[#D4AF37] text-white text-xs font-bold tracking-wide transition-all shadow-md"
+                  >
+                    Muat Foto Lainnya
+                  </button>
+                </div>
+              )}
+              </>
             )}
           </div>
         </div>
