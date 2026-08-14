@@ -212,12 +212,17 @@ export default function GalleryView({
   };
 
   const handleDownload = (photo: Photo) => {
-    const downloadUrl = `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(
-      photo.name
-    )}`;
+    // Download directly from Google Drive — bypasses Worker entirely
+    // (saves Worker requests + CPU time for large file streaming).
+    // For sample photos, use the API proxy (which redirects to Unsplash).
+    const downloadUrl = photo.id.startsWith("sample-")
+      ? `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`
+      : `https://drive.google.com/uc?export=download&id=${photo.id}`;
     const link = document.createElement("a");
     link.href = downloadUrl;
     link.setAttribute("download", photo.name);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -469,7 +474,9 @@ export default function GalleryView({
                 <AnimatePresence mode="popLayout">
                   {project.photos.slice(0, visibleCount).map((photo, index) => {
                     const cleanName = formatPhotoName(photo.name);
-                    const imageProxySrc = `/api/photo-proxy?id=${photo.id}`;
+                    // Use Google Drive thumbnail URL directly — bypasses Worker
+                    // entirely, saving Worker requests on free tier.
+                    const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w600`;
 
                     return (
                       <motion.div
@@ -611,7 +618,7 @@ export default function GalleryView({
                   className="lg:col-span-8 bg-slate-950 flex items-center justify-center relative group p-2"
                 >
                   <img
-                    src={`/api/photo-proxy?id=${activePhoto.id}&size=full`}
+                    src={`https://drive.google.com/thumbnail?id=${activePhoto.id}&sz=w1600`}
                     alt={activePhoto.name}
                     className="max-h-[75vh] object-contain max-w-full"
                   />
