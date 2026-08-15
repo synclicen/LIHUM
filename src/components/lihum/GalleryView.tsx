@@ -351,25 +351,33 @@ export default function GalleryView({
     saveScrollPosition();
 
     const selected = project.photos.filter((p) => selectedPhotos.has(p.id));
-    // Download each photo sequentially with a small delay to avoid
-    // browser blocking multiple downloads simultaneously.
+
+    // Use hidden iframe technique for multiple downloads.
+    // Browser blocks multiple <a download> clicks (popup blocker),
+    // but hidden iframes with src=download URL are allowed sequentially.
     for (let i = 0; i < selected.length; i++) {
       const photo = selected[i];
       const downloadUrl = photo.id.startsWith("sample-")
         ? `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`
         : `https://drive.google.com/uc?export=download&id=${photo.id}`;
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.setAttribute("download", photo.name);
-      link.setAttribute("target", "_blank");
-      link.setAttribute("rel", "noopener noreferrer");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      // Wait 800ms between downloads to let browser process each one
+
+      // Create hidden iframe to trigger download
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = downloadUrl;
+      document.body.appendChild(iframe);
+
+      // Wait before next download — let browser process this one
       if (i < selected.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
+
+      // Clean up iframe after download starts
+      setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 3000);
     }
 
     setBatchDownloading(false);
