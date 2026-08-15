@@ -16,6 +16,8 @@ import {
   Share2,
   AlertCircle,
   ArrowUpDown,
+  LayoutGrid,
+  Rows3,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -43,8 +45,9 @@ export default function GalleryView({
 
   // Pagination — only render a subset of photos to avoid loading 1700+ images
   // at once (which causes Cloudflare Workers rate limiting on free tier).
-  // Load 40 initially, then 40 more when user scrolls near the bottom.
-  const PAGE_SIZE = 40;
+  // Grid mode loads more per batch since thumbnails are smaller.
+  const [viewMode, setViewMode] = useState<"card" | "grid">("card");
+  const PAGE_SIZE = viewMode === "grid" ? 80 : 40;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   // Password state for private galleries
@@ -86,10 +89,17 @@ export default function GalleryView({
     };
   }, [searchQuery]);
 
-  // Reset pagination when project, search, or sort changes
+  // Load cached view mode from sessionStorage
+  useEffect(() => {
+    const cached = sessionStorage.getItem(`lihum:gallery-viewmode:${projectId}`);
+    if (cached === "grid" || cached === "card") setViewMode(cached);
+    else setViewMode("card");
+  }, [projectId]);
+
+  // Reset pagination when project, search, sort, or view mode changes
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [projectId, debouncedQuery, sortBy, unlockedPassword]);
+  }, [projectId, debouncedQuery, sortBy, unlockedPassword, viewMode]);
 
   // Auto-load more photos when user scrolls near the bottom of the grid
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -385,29 +395,65 @@ export default function GalleryView({
                 )}
               </div>
 
-              {/* Sort selector */}
-              <div className="relative">
-                <ArrowUpDown className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <select
-                  value={sortBy}
-                  onChange={(e) => handleSortChange(e.target.value as any)}
-                  className="w-full h-8 pl-8 pr-7 rounded-lg bg-white border-none shadow-md text-slate-700 text-[11px] focus:outline-none focus:ring-2 focus:ring-[#D4AF37] transition-all font-sans appearance-none cursor-pointer"
-                  title="Urutkan foto"
-                >
-                  <option value="default">Urutan Default</option>
-                  <option value="name-asc">Nama (A → Z)</option>
-                  <option value="name-desc">Nama (Z → A)</option>
-                  <option value="modified-desc">Terbaru Diubah</option>
-                  <option value="modified-asc">Terlama Diubah</option>
-                </select>
-                <svg
-                  className="w-3 h-3 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
-                </svg>
+              {/* Sort selector + View mode toggle */}
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={sortBy}
+                    onChange={(e) => handleSortChange(e.target.value as any)}
+                    className="w-full h-8 pl-8 pr-7 rounded-lg bg-white border-none shadow-md text-slate-700 text-[11px] focus:outline-none focus:ring-2 focus:ring-[#D4AF37] transition-all font-sans appearance-none cursor-pointer"
+                    title="Urutkan foto"
+                  >
+                    <option value="default">Urutan Default</option>
+                    <option value="name-asc">Nama (A → Z)</option>
+                    <option value="name-desc">Nama (Z → A)</option>
+                    <option value="modified-desc">Terbaru Diubah</option>
+                    <option value="modified-asc">Terlama Diubah</option>
+                  </select>
+                  <svg
+                    className="w-3 h-3 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+
+                {/* View mode toggle: Card vs Grid */}
+                <div className="flex items-center bg-white rounded-lg shadow-md overflow-hidden shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViewMode("card");
+                      sessionStorage.setItem(`lihum:gallery-viewmode:${projectId}`, "card");
+                    }}
+                    className={`h-8 w-8 flex items-center justify-center transition-all ${
+                      viewMode === "card"
+                        ? "bg-[#4C2A85] text-white"
+                        : "text-slate-400 hover:text-slate-700"
+                    }`}
+                    title="Tampilan kartu (detail)"
+                  >
+                    <Rows3 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViewMode("grid");
+                      sessionStorage.setItem(`lihum:gallery-viewmode:${projectId}`, "grid");
+                    }}
+                    className={`h-8 w-8 flex items-center justify-center transition-all ${
+                      viewMode === "grid"
+                        ? "bg-[#4C2A85] text-white"
+                        : "text-slate-400 hover:text-slate-700"
+                    }`}
+                    title="Tampilan grid (compact — lebih cepat untuk ribuan foto)"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               {isSearchMode && (
@@ -467,99 +513,141 @@ export default function GalleryView({
               </div>
             ) : (
               <>
-              <motion.div
-                layout
-                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6"
-              >
-                <AnimatePresence mode="popLayout">
-                  {project.photos.slice(0, visibleCount).map((photo, index) => {
-                    const cleanName = formatPhotoName(photo.name);
-                    // Use Google Drive thumbnail URL directly — bypasses Worker
-                    // entirely, saving Worker requests on free tier.
-                    const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w600`;
-
-                    return (
-                      <motion.div
-                        key={photo.id}
-                        layout
-                        initial={{ opacity: 0, y: 15 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{
-                          duration: 0.3,
-                          delay: Math.min(index * 0.04, 0.4),
-                        }}
-                        className="group flex flex-col h-full bg-white text-slate-800 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden justify-between transition-all duration-300 hover:translate-y-[-4px]"
-                      >
-                        {/* Photo Box — shows full image in any aspect ratio */}
-                        <div
-                          className="relative bg-slate-100 overflow-hidden cursor-pointer select-none flex items-center justify-center"
-                          style={{ aspectRatio: "3 / 2" }}
+              {viewMode === "grid" ? (
+                /* ── GRID MODE: compact, square thumbnails, no text ── */
+                /* Ideal for galleries with thousands of photos — visitors
+                   can scan many photos quickly without scrolling endlessly. */
+                <motion.div
+                  layout
+                  className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12 gap-1.5"
+                >
+                  <AnimatePresence mode="popLayout">
+                    {project.photos.slice(0, visibleCount).map((photo, index) => {
+                      const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w400`;
+                      return (
+                        <motion.div
+                          key={photo.id}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2, delay: Math.min(index * 0.01, 0.2) }}
+                          className="group relative aspect-square bg-slate-100 rounded-lg overflow-hidden cursor-pointer border-2 border-transparent hover:border-[#D4AF37] transition-all"
                           onClick={() => setActivePhoto(photo)}
+                          title={photo.name}
                         >
-                          {/* Image display — object-contain shows the full photo
-                              without cropping, regardless of portrait/landscape. */}
                           <img
                             src={imageProxySrc}
                             alt={photo.name}
-                            className="w-full h-full object-contain group-hover:scale-105 transition-all duration-500"
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                             loading="lazy"
                           />
-
-                          {/* Quick size Tag in Sleek monospace */}
-                          {photo.size && (
-                            <span className="absolute top-2.5 right-2.5 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
-                              {photo.size}
-                            </span>
-                          )}
-
-                          {/* Quick download button directly on the image */}
+                          {/* Download icon on hover */}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDownload(photo);
                             }}
-                            className="absolute bottom-2.5 right-2.5 z-10 bg-[#D4AF37] hover:bg-[#dfbb66] active:scale-90 text-[#4C2A85] p-2 rounded-lg shadow-md transition-all cursor-pointer"
-                            title="Unduh Langsung"
+                            className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-all opacity-0 group-hover:opacity-100"
+                            title="Unduh foto ini"
                           >
-                            <svg
-                              className="w-3.5 h-3.5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth="2.5"
-                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                              />
-                            </svg>
+                            <Download className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
                           </button>
-                        </div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </motion.div>
+              ) : (
+                /* ── CARD MODE: detailed cards with title, filename, download ── */
+                <motion.div
+                  layout
+                  className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6"
+                >
+                  <AnimatePresence mode="popLayout">
+                    {project.photos.slice(0, visibleCount).map((photo, index) => {
+                      const cleanName = formatPhotoName(photo.name);
+                      const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w600`;
 
-                        {/* Detail text */}
-                        <div className="p-3 bg-white">
-                          <div className="space-y-0.5">
-                            <h3
-                              onClick={() => setActivePhoto(photo)}
-                              className="font-serif text-xs font-bold text-slate-900 line-clamp-1 hover:text-[#4C2A85] cursor-pointer transition-colors"
-                              title={photo.name}
-                            >
-                              {cleanName}
-                            </h3>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[9px] font-mono text-slate-400 truncate leading-tight max-w-full">
-                                {photo.name}
+                      return (
+                        <motion.div
+                          key={photo.id}
+                          layout
+                          initial={{ opacity: 0, y: 15 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          transition={{
+                            duration: 0.3,
+                            delay: Math.min(index * 0.04, 0.4),
+                          }}
+                          className="group flex flex-col h-full bg-white text-slate-800 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden justify-between transition-all duration-300 hover:translate-y-[-4px]"
+                        >
+                          {/* Photo Box — shows full image in any aspect ratio */}
+                          <div
+                            className="relative bg-slate-100 overflow-hidden cursor-pointer select-none flex items-center justify-center"
+                            style={{ aspectRatio: "3 / 2" }}
+                            onClick={() => setActivePhoto(photo)}
+                          >
+                            <img
+                              src={imageProxySrc}
+                              alt={photo.name}
+                              className="w-full h-full object-contain group-hover:scale-105 transition-all duration-500"
+                              loading="lazy"
+                            />
+
+                            {photo.size && (
+                              <span className="absolute top-2.5 right-2.5 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
+                                {photo.size}
                               </span>
+                            )}
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownload(photo);
+                              }}
+                              className="absolute bottom-2.5 right-2.5 z-10 bg-[#D4AF37] hover:bg-[#dfbb66] active:scale-90 text-[#4C2A85] p-2 rounded-lg shadow-md transition-all cursor-pointer"
+                              title="Unduh Langsung"
+                            >
+                              <svg
+                                className="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2.5"
+                                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {/* Detail text */}
+                          <div className="p-3 bg-white">
+                            <div className="space-y-0.5">
+                              <h3
+                                onClick={() => setActivePhoto(photo)}
+                                className="font-serif text-xs font-bold text-slate-900 line-clamp-1 hover:text-[#4C2A85] cursor-pointer transition-colors"
+                                title={photo.name}
+                              >
+                                {cleanName}
+                              </h3>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-mono text-slate-400 truncate leading-tight max-w-full">
+                                  {photo.name}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-              </motion.div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </motion.div>
+              )}
 
               {/* Load More button — shown when there are more photos to display */}
               {visibleCount < (project.photos?.length || 0) && (
