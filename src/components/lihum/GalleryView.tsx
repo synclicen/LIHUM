@@ -583,7 +583,7 @@ export default function GalleryView({
                           {/* Photo name overlay — no gradient bg, black text with cream blurry edge */}
                           <div className="absolute bottom-0 left-0 right-0 px-2 pb-1 pointer-events-none">
                             <h3
-                              className="text-[8px] font-sans font-medium text-black line-clamp-1"
+                              className="text-[4px] font-sans font-medium text-black line-clamp-1"
                               style={{
                                 textShadow:
                                   "0 0 3px rgba(255,248,220,0.95), 0 0 6px rgba(255,248,220,0.8), 0 0 9px rgba(255,248,220,0.6), 0 1px 2px rgba(255,255,255,0.9)",
