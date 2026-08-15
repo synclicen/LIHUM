@@ -244,34 +244,8 @@ export default function GalleryView({
   return (
     <div
       id="gallery-view-container"
-      className="flex-1 flex flex-col h-full overflow-hidden space-y-4 animate-fadeIn"
+      className="flex-1 flex flex-col h-full overflow-hidden space-y-3 animate-fadeIn"
     >
-      {/* Gallery Header navigation */}
-      <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-violet-900/30">
-        <div className="flex flex-wrap items-center gap-3">
-          {isAdmin && (
-            <button
-              onClick={onBack}
-              className="group flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-[#D4AF37] max-w-max transition-all cursor-pointer mr-2"
-            >
-              <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
-              <span>Kembali ke Galeri Utama</span>
-            </button>
-          )}
-          {project && onShare && (
-            <button
-              onClick={() => onShare(project)}
-              className="flex items-center space-x-1.5 text-xs font-bold uppercase tracking-wider text-[#D4AF37] hover:text-white bg-[#4C2A85]/30 hover:bg-[#4C2A85] border border-[#D4AF37]/20 px-3 py-1 rounded-lg transition-all cursor-pointer shadow-md"
-              title="Bagikan Tautan & QR Code Galeri Ini"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Bagikan Galeri</span>
-            </button>
-          )}
-        </div>
-
-      </div>
-
       {loading && !project ? (
         <div className="flex-grow flex flex-col items-center justify-center py-20">
           <Loader2 className="w-10 h-10 text-amber-500 animate-spin mb-4" />
@@ -350,10 +324,19 @@ export default function GalleryView({
         </div>
       ) : (
         <div className="flex-grow flex flex-col min-h-0 space-y-3">
-          {/* Compact Top Bar: title (left) + search/sort/controls (right) */}
+          {/* Compact Top Bar: back/share + title (left) + search/sort/controls (right) */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 flex-shrink-0 w-full bg-[#120A21]/40 border border-violet-900/20 px-3 py-2 rounded-xl">
-            {/* Gallery title — compact, single line */}
-            <div className="flex items-center gap-2 min-w-0 md:max-w-xs">
+            {/* Left: back button + title + share */}
+            <div className="flex items-center gap-2 min-w-0 md:max-w-lg">
+              {isAdmin && (
+                <button
+                  onClick={onBack}
+                  className="group flex items-center justify-center w-7 h-7 shrink-0 text-slate-400 hover:text-[#D4AF37] rounded-lg hover:bg-white/5 transition-all cursor-pointer"
+                  title="Kembali ke Galeri Utama"
+                >
+                  <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+                </button>
+              )}
               <Sparkles className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
               <div className="min-w-0">
                 <h2 className="text-xs md:text-sm font-bold font-serif text-white tracking-wide leading-tight truncate">
@@ -365,6 +348,15 @@ export default function GalleryView({
                   </p>
                 )}
               </div>
+              {onShare && (
+                <button
+                  onClick={() => onShare(project)}
+                  className="flex items-center justify-center w-7 h-7 shrink-0 text-[#D4AF37] hover:text-white bg-[#4C2A85]/30 hover:bg-[#4C2A85] border border-[#D4AF37]/20 rounded-lg transition-all cursor-pointer"
+                  title="Bagikan Tautan & QR Code Galeri Ini"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Search + Sort + View toggle — inline, compact */}
