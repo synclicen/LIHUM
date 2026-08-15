@@ -18,6 +18,9 @@ import {
   ArrowUpDown,
   LayoutGrid,
   Rows3,
+  CheckSquare,
+  Square,
+  XCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -49,6 +52,11 @@ export default function GalleryView({
   const [viewMode, setViewMode] = useState<"card" | "grid">("card");
   const PAGE_SIZE = viewMode === "grid" ? 80 : 40;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Multi-select state for batch download
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
+  const [batchDownloading, setBatchDownloading] = useState(false);
 
   // Password state for private galleries
   const [passwordInput, setPasswordInput] = useState("");
@@ -222,6 +230,8 @@ export default function GalleryView({
   };
 
   const handleDownload = (photo: Photo) => {
+    // Save scroll position so user returns to the same spot after download
+    saveScrollPosition();
     // Download directly from Google Drive — bypasses Worker entirely
     // (saves Worker requests + CPU time for large file streaming).
     // For sample photos, use the API proxy (which redirects to Unsplash).
@@ -236,6 +246,116 @@ export default function GalleryView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // ── Scroll Position Memory ──
+  // Save scroll position to sessionStorage so visitor returns to the same
+  // spot after downloading a photo (which may navigate away briefly).
+  const saveScrollPosition = () => {
+    if (scrollContainerRef.current) {
+      const scrollTop = scrollContainerRef.current.scrollTop;
+      sessionStorage.setItem(`lihum:gallery-scroll:${projectId}`, String(scrollTop));
+    }
+  };
+
+  // Restore scroll position after photos are loaded
+  useEffect(() => {
+    if (!loading && project && !project.requiresPassword) {
+      const saved = sessionStorage.getItem(`lihum:gallery-scroll:${projectId}`);
+      if (saved) {
+        const scrollTop = parseInt(saved, 10);
+        // Small delay to ensure DOM is rendered before scrolling
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop = scrollTop;
+          }
+        });
+      }
+    }
+  }, [loading, project, projectId]);
+
+  // Save scroll position periodically (debounced via scroll event)
+  const handleScrollWithSave = (e: React.UIEvent<HTMLDivElement>) => {
+    handleScroll(e);
+    // Debounce save — only save if user stops scrolling for 500ms
+    if (scrollSaveTimer.current) clearTimeout(scrollSaveTimer.current);
+    scrollSaveTimer.current = setTimeout(saveScrollPosition, 500);
+  };
+
+  const scrollSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Multi-Select Handlers ──
+  const togglePhotoSelection = (photoId: string) => {
+    setSelectedPhotos((prev) => {
+      const next = new Set(prev);
+      if (next.has(photoId)) {
+        next.delete(photoId);
+      } else {
+        next.add(photoId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectMode = () => {
+    setSelectMode((prev) => !prev);
+    if (selectMode) {
+      // Exiting select mode — clear selections
+      setSelectedPhotos(new Set());
+    }
+  };
+
+  const selectAllVisible = () => {
+    if (!project) return;
+    const visiblePhotos = project.photos.slice(0, visibleCount);
+    const allSelected = visiblePhotos.every((p) => selectedPhotos.has(p.id));
+    if (allSelected) {
+      // Deselect all visible
+      setSelectedPhotos((prev) => {
+        const next = new Set(prev);
+        visiblePhotos.forEach((p) => next.delete(p.id));
+        return next;
+      });
+    } else {
+      // Select all visible
+      setSelectedPhotos((prev) => {
+        const next = new Set(prev);
+        visiblePhotos.forEach((p) => next.add(p.id));
+        return next;
+      });
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (!project || selectedPhotos.size === 0) return;
+    setBatchDownloading(true);
+    saveScrollPosition();
+
+    const selected = project.photos.filter((p) => selectedPhotos.has(p.id));
+    // Download each photo sequentially with a small delay to avoid
+    // browser blocking multiple downloads simultaneously.
+    for (let i = 0; i < selected.length; i++) {
+      const photo = selected[i];
+      const downloadUrl = photo.id.startsWith("sample-")
+        ? `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`
+        : `https://drive.google.com/uc?export=download&id=${photo.id}`;
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", photo.name);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      // Wait 800ms between downloads to let browser process each one
+      if (i < selected.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+    }
+
+    setBatchDownloading(false);
+    setSelectMode(false);
+    setSelectedPhotos(new Set());
   };
 
   const isSearchMode = project?.displayMode === "search";
@@ -442,6 +562,27 @@ export default function GalleryView({
                   <LayoutGrid className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {/* Multi-select toggle */}
+              <button
+                type="button"
+                onClick={toggleSelectMode}
+                className={`h-8 px-2 flex items-center justify-center gap-1 rounded-lg shadow-md transition-all shrink-0 ${
+                  selectMode
+                    ? "bg-[#D4AF37] text-[#4C2A85]"
+                    : "bg-white text-slate-400 hover:text-slate-700"
+                }`}
+                title="Pilih beberapa foto untuk download sekaligus"
+              >
+                {selectMode ? (
+                  <CheckSquare className="w-3.5 h-3.5" />
+                ) : (
+                  <Square className="w-3.5 h-3.5" />
+                )}
+                <span className="text-[10px] font-bold">
+                  {selectMode ? `${selectedPhotos.size}` : "Pilih"}
+                </span>
+              </button>
             </div>
           </div>
 
@@ -455,7 +596,7 @@ export default function GalleryView({
           {/* Results Display */}
           <div
             ref={scrollContainerRef}
-            onScroll={handleScroll}
+            onScroll={handleScrollWithSave}
             className="flex-grow min-h-0 overflow-y-auto pr-1 select-none custom-scrollbar pb-6 pt-1"
           >
             {loading ? (
@@ -519,8 +660,18 @@ export default function GalleryView({
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.2, delay: Math.min(index * 0.01, 0.2) }}
-                          className="group relative aspect-square bg-slate-100 rounded-lg overflow-hidden cursor-pointer border-2 border-transparent hover:border-[#D4AF37] transition-all"
-                          onClick={() => setActivePhoto(photo)}
+                          className={`group relative aspect-square bg-slate-100 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+                            selectMode && selectedPhotos.has(photo.id)
+                              ? "border-[#D4AF37] ring-2 ring-[#D4AF37]/50"
+                              : "border-transparent hover:border-[#D4AF37]"
+                          }`}
+                          onClick={() => {
+                            if (selectMode) {
+                              togglePhotoSelection(photo.id);
+                            } else {
+                              setActivePhoto(photo);
+                            }
+                          }}
                           title={photo.name}
                         >
                           <img
@@ -529,17 +680,29 @@ export default function GalleryView({
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                             loading="lazy"
                           />
-                          {/* Download icon on hover */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownload(photo);
-                            }}
-                            className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-all opacity-0 group-hover:opacity-100"
-                            title="Unduh foto ini"
-                          >
-                            <Download className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
-                          </button>
+                          {/* Select checkbox — only in select mode */}
+                          {selectMode && (
+                            <div className="absolute top-1 left-1 z-20 pointer-events-none">
+                              {selectedPhotos.has(photo.id) ? (
+                                <CheckSquare className="w-4 h-4 text-[#D4AF37] drop-shadow-lg" />
+                              ) : (
+                                <Square className="w-4 h-4 text-white/80 drop-shadow-lg" />
+                              )}
+                            </div>
+                          )}
+                          {/* Download icon on hover — hidden in select mode */}
+                          {!selectMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownload(photo);
+                              }}
+                              className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-all opacity-0 group-hover:opacity-100"
+                              title="Unduh foto ini"
+                            >
+                              <Download className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
+                            </button>
+                          )}
                         </motion.div>
                       );
                     })}
@@ -567,9 +730,19 @@ export default function GalleryView({
                             duration: 0.3,
                             delay: Math.min(index * 0.04, 0.4),
                           }}
-                          className="group relative bg-slate-100 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden transition-all duration-300 hover:translate-y-[-4px] cursor-pointer"
+                          className={`group relative bg-slate-100 border-2 rounded-xl shadow-md overflow-hidden transition-all duration-300 hover:translate-y-[-4px] cursor-pointer ${
+                            selectMode && selectedPhotos.has(photo.id)
+                              ? "border-[#D4AF37] ring-2 ring-[#D4AF37]/50"
+                              : "border-slate-100 hover:border-[#D4AF37]"
+                          }`}
                           style={{ aspectRatio: "3 / 2" }}
-                          onClick={() => setActivePhoto(photo)}
+                          onClick={() => {
+                            if (selectMode) {
+                              togglePhotoSelection(photo.id);
+                            } else {
+                              setActivePhoto(photo);
+                            }
+                          }}
                           title={photo.name}
                         >
                           {/* Photo — full image, object-contain */}
@@ -594,13 +767,25 @@ export default function GalleryView({
                           </div>
 
                           {/* Size badge */}
-                          {photo.size && (
+                          {photo.size && !selectMode && (
                             <span className="absolute top-2 right-2 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
                               {photo.size}
                             </span>
                           )}
 
-                          {/* Download button */}
+                          {/* Select checkbox — only in select mode */}
+                          {selectMode && (
+                            <div className="absolute top-2 left-2 z-20 pointer-events-none">
+                              {selectedPhotos.has(photo.id) ? (
+                                <CheckSquare className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
+                              ) : (
+                                <Square className="w-5 h-5 text-white/80 drop-shadow-lg" />
+                              )}
+                            </div>
+                          )}
+
+                          {/* Download button — hidden in select mode */}
+                          {!selectMode && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -623,6 +808,7 @@ export default function GalleryView({
                               />
                             </svg>
                           </button>
+                          )}
                         </motion.div>
                       );
                     })}
@@ -654,6 +840,60 @@ export default function GalleryView({
           </div>
         </div>
       )}
+
+      {/* Floating batch download bar — shown when in select mode */}
+      <AnimatePresence>
+        {selectMode && project && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-[#120A21] border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-2xl backdrop-blur-md"
+          >
+            <button
+              type="button"
+              onClick={selectAllVisible}
+              className="text-[10px] font-bold text-slate-300 hover:text-[#D4AF37] transition-colors px-2"
+              title="Pilih/Batal semua foto yang tampil"
+            >
+              {project.photos.slice(0, visibleCount).every((p) => selectedPhotos.has(p.id))
+                ? "Batal Semua"
+                : "Pilih Semua"}
+            </button>
+            <div className="w-px h-6 bg-[#D4AF37]/20" />
+            <span className="text-xs font-mono text-[#D4AF37] font-bold">
+              {selectedPhotos.size} dipilih
+            </span>
+            <button
+              type="button"
+              onClick={handleBatchDownload}
+              disabled={selectedPhotos.size === 0 || batchDownloading}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
+            >
+              {batchDownloading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Mengunduh...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh ({selectedPhotos.size})</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={toggleSelectMode}
+              className="p-1.5 text-slate-400 hover:text-red-400 transition-colors"
+              title="Keluar dari mode pilih"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Photobox Fullscreen Modal Lightbox */}
       <AnimatePresence>
