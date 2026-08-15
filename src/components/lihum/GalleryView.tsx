@@ -54,9 +54,11 @@ export default function GalleryView({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   // Multi-select state for batch download
+  const MAX_SELECTION = 50;
   const [selectMode, setSelectMode] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
   const [batchDownloading, setBatchDownloading] = useState(false);
+  const [limitMessage, setLimitMessage] = useState("");
 
   // Password state for private galleries
   const [passwordInput, setPasswordInput] = useState("");
@@ -290,8 +292,14 @@ export default function GalleryView({
       const next = new Set(prev);
       if (next.has(photoId)) {
         next.delete(photoId);
+        setLimitMessage(""); // clear message when deselecting
       } else {
+        if (next.size >= MAX_SELECTION) {
+          setLimitMessage(`Maksimal ${MAX_SELECTION} foto per unduhan. Hapus beberapa pilihan untuk menambah yang lain.`);
+          return prev; // don't add — stay at limit
+        }
         next.add(photoId);
+        setLimitMessage("");
       }
       return next;
     });
@@ -316,11 +324,22 @@ export default function GalleryView({
         visiblePhotos.forEach((p) => next.delete(p.id));
         return next;
       });
+      setLimitMessage("");
     } else {
-      // Select all visible
+      // Select all visible — but respect MAX_SELECTION limit
       setSelectedPhotos((prev) => {
         const next = new Set(prev);
-        visiblePhotos.forEach((p) => next.add(p.id));
+        let added = 0;
+        for (const p of visiblePhotos) {
+          if (next.size >= MAX_SELECTION) break;
+          if (!next.has(p.id)) {
+            next.add(p.id);
+            added++;
+          }
+        }
+        if (next.size >= MAX_SELECTION && visiblePhotos.length > next.size) {
+          setLimitMessage(`Maksimal ${MAX_SELECTION} foto per unduhan. ${next.size} foto sudah terpilih.`);
+        }
         return next;
       });
     }
@@ -849,8 +868,23 @@ export default function GalleryView({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-[#120A21] border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-2xl backdrop-blur-md"
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 bg-[#120A21] border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-2xl backdrop-blur-md"
           >
+            {/* Limit notification */}
+            <AnimatePresence>
+              {limitMessage && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex items-center gap-1.5 text-[10px] text-amber-400 font-medium px-2 pb-1"
+                >
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>{limitMessage}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={selectAllVisible}
@@ -863,7 +897,7 @@ export default function GalleryView({
             </button>
             <div className="w-px h-6 bg-[#D4AF37]/20" />
             <span className="text-xs font-mono text-[#D4AF37] font-bold">
-              {selectedPhotos.size} dipilih
+              {selectedPhotos.size}/{MAX_SELECTION} dipilih
             </span>
             <button
               type="button"
@@ -891,6 +925,7 @@ export default function GalleryView({
             >
               <XCircle className="w-4 h-4" />
             </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
