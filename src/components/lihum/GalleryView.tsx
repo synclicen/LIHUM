@@ -581,8 +581,8 @@ export default function GalleryView({
                           />
 
                           {/* Gradient overlay at bottom + photo name (transparent layer) */}
-                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-6 pb-2 px-3 pointer-events-none">
-                            <h3 className="text-[11px] font-sans font-semibold text-white line-clamp-1 drop-shadow-md">
+                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-5 pb-1.5 px-2.5 pointer-events-none">
+                            <h3 className="text-[9px] font-sans font-medium text-slate-200 line-clamp-1 drop-shadow-md">
                               {cleanName}
                             </h3>
                           </div>
