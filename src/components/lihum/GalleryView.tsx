@@ -567,61 +567,56 @@ export default function GalleryView({
                             duration: 0.3,
                             delay: Math.min(index * 0.04, 0.4),
                           }}
-                          className="group flex flex-col h-full bg-white text-slate-800 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden justify-between transition-all duration-300 hover:translate-y-[-4px]"
+                          className="group relative bg-slate-100 border-2 border-slate-100 hover:border-[#D4AF37] rounded-xl shadow-md overflow-hidden transition-all duration-300 hover:translate-y-[-4px] cursor-pointer"
+                          style={{ aspectRatio: "3 / 2" }}
+                          onClick={() => setActivePhoto(photo)}
+                          title={photo.name}
                         >
-                          {/* Photo Box — shows full image in any aspect ratio */}
-                          <div
-                            className="relative bg-slate-100 overflow-hidden cursor-pointer select-none flex items-center justify-center"
-                            style={{ aspectRatio: "3 / 2" }}
-                            onClick={() => setActivePhoto(photo)}
-                          >
-                            <img
-                              src={imageProxySrc}
-                              alt={photo.name}
-                              className="w-full h-full object-contain group-hover:scale-105 transition-all duration-500"
-                              loading="lazy"
-                            />
+                          {/* Photo — full image, object-contain */}
+                          <img
+                            src={imageProxySrc}
+                            alt={photo.name}
+                            className="w-full h-full object-contain group-hover:scale-105 transition-all duration-500"
+                            loading="lazy"
+                          />
 
-                            {photo.size && (
-                              <span className="absolute top-2.5 right-2.5 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
-                                {photo.size}
-                              </span>
-                            )}
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(photo);
-                              }}
-                              className="absolute bottom-2.5 right-2.5 z-10 bg-[#D4AF37] hover:bg-[#dfbb66] active:scale-90 text-[#4C2A85] p-2 rounded-lg shadow-md transition-all cursor-pointer"
-                              title="Unduh Langsung"
-                            >
-                              <svg
-                                className="w-3.5 h-3.5"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2.5"
-                                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                                />
-                              </svg>
-                            </button>
-                          </div>
-
-                          {/* Detail text — single name only (no duplicate) */}
-                          <div className="p-2.5 bg-white">
-                            <h3
-                              onClick={() => setActivePhoto(photo)}
-                              className="font-serif text-xs font-bold text-slate-900 line-clamp-1 hover:text-[#4C2A85] cursor-pointer transition-colors"
-                              title={photo.name}
-                            >
+                          {/* Gradient overlay at bottom + photo name (transparent layer) */}
+                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-6 pb-2 px-3 pointer-events-none">
+                            <h3 className="text-[11px] font-sans font-semibold text-white line-clamp-1 drop-shadow-md">
                               {cleanName}
                             </h3>
                           </div>
+
+                          {/* Size badge */}
+                          {photo.size && (
+                            <span className="absolute top-2 right-2 text-[9px] font-mono tracking-wide bg-slate-900/80 text-white py-0.5 px-2 rounded font-medium border border-white/10 backdrop-blur-sm pointer-events-none">
+                              {photo.size}
+                            </span>
+                          )}
+
+                          {/* Download button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownload(photo);
+                            }}
+                            className="absolute bottom-2 right-2 z-10 bg-[#D4AF37] hover:bg-[#dfbb66] active:scale-90 text-[#4C2A85] p-2 rounded-lg shadow-md transition-all cursor-pointer"
+                            title="Unduh Langsung"
+                          >
+                            <svg
+                              className="w-3.5 h-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2.5"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                              />
+                            </svg>
+                          </button>
                         </motion.div>
                       );
                     })}
