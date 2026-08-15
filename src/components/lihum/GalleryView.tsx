@@ -580,9 +580,15 @@ export default function GalleryView({
                             loading="lazy"
                           />
 
-                          {/* Gradient overlay at bottom + photo name (transparent layer) */}
-                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-5 pb-1.5 px-2.5 pointer-events-none">
-                            <h3 className="text-[9px] font-sans font-medium text-slate-200 line-clamp-1 drop-shadow-md">
+                          {/* Photo name overlay — no gradient bg, black text with cream blurry edge */}
+                          <div className="absolute bottom-0 left-0 right-0 px-2 pb-1 pointer-events-none">
+                            <h3
+                              className="text-[8px] font-sans font-medium text-black line-clamp-1"
+                              style={{
+                                textShadow:
+                                  "0 0 3px rgba(255,248,220,0.95), 0 0 6px rgba(255,248,220,0.8), 0 0 9px rgba(255,248,220,0.6), 0 1px 2px rgba(255,255,255,0.9)",
+                              }}
+                            >
                               {cleanName}
                             </h3>
                           </div>
