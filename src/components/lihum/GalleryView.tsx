@@ -709,18 +709,11 @@ export default function GalleryView({
                               )}
                             </div>
                           )}
-                          {/* Download icon on hover — hidden in select mode */}
+                          {/* Hover overlay — just visual, click opens lightbox */}
                           {!selectMode && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(photo);
-                              }}
-                              className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-all opacity-0 group-hover:opacity-100"
-                              title="Unduh foto ini"
-                            >
-                              <Download className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
-                            </button>
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-all opacity-0 group-hover:opacity-100 pointer-events-none">
+                              <Search className="w-5 h-5 text-[#D4AF37] drop-shadow-lg" />
+                            </div>
                           )}
                         </motion.div>
                       );
