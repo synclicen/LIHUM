@@ -428,7 +428,7 @@ export default function AdminPanel({
           </label>
           <input
             type="text"
-            placeholder="Contoh: Taman Bunga Indah"
+            placeholder=""
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
@@ -441,7 +441,7 @@ export default function AdminPanel({
             Deskripsi Singkat
           </label>
           <textarea
-            placeholder="Berikan info tentang lokasi ini untuk pengunjung..."
+            placeholder=""
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
@@ -469,22 +469,13 @@ export default function AdminPanel({
           <div className="relative">
             <input
               type="url"
-              placeholder="https://drive.google.com/drive/folders/ID_FOLDER..."
+              placeholder=""
               value={driveFolderUrl}
               onChange={(e) => setDriveFolderUrl(e.target.value)}
               className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
               required
             />
           </div>
-          <p className="text-[10px] text-slate-400 mt-1 flex items-center space-x-1">
-            <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-            <span>
-              Salin-tempel tautan folder Drive publik Anda.{" "}
-              <strong className="text-[#D4AF37]/80">
-                Subfolder di dalamnya ikut terscan otomatis.
-              </strong>
-            </span>
-          </p>
         </div>
 
         <div>
@@ -584,8 +575,8 @@ export default function AdminPanel({
               type="text"
               placeholder={
                 isEditing
-                  ? "Kosongkan jika tidak ingin mengubah password"
-                  : "Masukkan password (min. 3 karakter)"
+                  ? ""
+                  : ""
               }
               value={password}
               onChange={(e) => setPassword(e.target.value)}
