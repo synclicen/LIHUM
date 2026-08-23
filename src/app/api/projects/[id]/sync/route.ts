@@ -429,8 +429,16 @@ export async function POST(
       filteredStats = filterResult.stats;
     }
 
-    const mappedPhotos: NewPhotoInput[] = photosToStore.map(({ file, parentName }) => {
-      const displayName = parentName ? `${parentName} — ${file.name}` : file.name;
+    // Rename photos to: {galleryName} - {001}.ext
+    // Clean, consistent, hides original Drive filename and subfolder structure.
+    // Extension preserved from original file.
+    const galleryName = project.name;
+    const mappedPhotos: NewPhotoInput[] = photosToStore.map(({ file, parentName }, index) => {
+      // Extract extension from original filename
+      const extMatch = file.name.match(/\.([^.]+)$/);
+      const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : ".jpg";
+      // Format: "Gallery Name - 001.jpg"
+      const displayName = `${galleryName} - ${String(index + 1).padStart(3, "0")}${ext}`;
 
       let sizeFormatted = "Unknown";
       if (file.size) {

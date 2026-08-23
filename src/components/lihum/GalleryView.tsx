@@ -232,19 +232,15 @@ export default function GalleryView({
   };
 
   const handleDownload = (photo: Photo) => {
-    // Save scroll position so user returns to the same spot after download
     saveScrollPosition();
-    // Download directly from Google Drive — bypasses Worker entirely
-    // (saves Worker requests + CPU time for large file streaming).
-    // For sample photos, use the API proxy (which redirects to Unsplash).
-    const downloadUrl = photo.id.startsWith("sample-")
-      ? `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`
-      : `https://drive.google.com/uc?export=download&id=${photo.id}`;
+    // Route through our proxy to hide the original Google Drive source.
+    // The proxy does a 302 redirect (very lightweight — 1 Worker request,
+    // no image bytes through Worker) and the browser saves the file with
+    // the clean gallery-based name (e.g. "Lomba Hut RI Ke 81 - 001.jpg").
+    const downloadUrl = `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`;
     const link = document.createElement("a");
     link.href = downloadUrl;
     link.setAttribute("download", photo.name);
-    link.setAttribute("target", "_blank");
-    link.setAttribute("rel", "noopener noreferrer");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -357,9 +353,8 @@ export default function GalleryView({
     // but hidden iframes with src=download URL are allowed sequentially.
     for (let i = 0; i < selected.length; i++) {
       const photo = selected[i];
-      const downloadUrl = photo.id.startsWith("sample-")
-        ? `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`
-        : `https://drive.google.com/uc?export=download&id=${photo.id}`;
+      // Route through our proxy — hides Google Drive source, saves with clean name
+      const downloadUrl = `/api/photo-proxy/download?id=${photo.id}&name=${encodeURIComponent(photo.name)}`;
 
       // Create hidden iframe to trigger download
       const iframe = document.createElement("iframe");
