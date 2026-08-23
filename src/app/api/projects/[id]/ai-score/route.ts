@@ -39,6 +39,17 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  // SERVER-SIDE LIMIT: reject if gallery has more than 200 photos.
+  // This protects the Worker from excessive VLM API calls that could
+  // exhaust free tier limits (100k requests/day) or cause timeout.
+  // Client-side also has this check, but server-side is the real gate.
+  const MAX_AI_FILTER_PHOTOS = 200;
+  if (project.photoCount > MAX_AI_FILTER_PHOTOS) {
+    return NextResponse.json({
+      error: `Filter AI dibatasi maksimal ${MAX_AI_FILTER_PHOTOS} foto. Galeri ini memiliki ${project.photoCount} foto. Untuk galeri besar, gunakan Filter Otomatis (file <100KB) saat sync, atau bagi foto ke beberapa galeri lebih kecil.`,
+    }, { status: 400 });
+  }
+
   const body = await req.json().catch(() => ({}));
   const { photoId } = body;
   if (!photoId) {

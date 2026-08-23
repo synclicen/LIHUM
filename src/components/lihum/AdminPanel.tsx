@@ -76,6 +76,7 @@ export default function AdminPanel({
   const [togglingHideId, setTogglingHideId] = useState<string | null>(null);
   const [aiFilterId, setAiFilterId] = useState<string | null>(null);
   const [aiFilterProgress, setAiFilterProgress] = useState({ current: 0, total: 0, hidden: 0 });
+  const [aiFilterConfirm, setAiFilterConfirm] = useState<{ project: ProjectSummary; estimatedTime: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -322,17 +323,32 @@ export default function AdminPanel({
   };
 
   // ── AI Filter: score each photo via VLM, hide low-quality ones ──
-  // Processes photos one by one with 2s delay between calls to avoid
-  // rate limiting. Shows live progress to admin.
-  const handleAiFilter = async (project: ProjectSummary) => {
+  // Shows confirmation modal first, then processes photos one by one with
+  // 1.5s delay between calls to avoid rate limiting.
+  const handleAiFilterClick = (project: ProjectSummary) => {
     if (project.photoCount === 0) {
       setErrorMsg("Galeri belum memiliki foto. Sinkron Drive dulu sebelum filter AI.");
       return;
     }
     if (project.photoCount > 200) {
-      setErrorMsg(`Filter AI dibatasi maksimal 200 foto (galeri ini: ${project.photoCount}). Untuk galeri besar, gunakan Filter Otomatis (dedup) saja.`);
+      setErrorMsg(`Filter AI dibatasi maksimal 200 foto (galeri ini: ${project.photoCount}). Untuk galeri besar, gunakan Filter Otomatis saja.`);
       return;
     }
+    // Show confirmation modal with estimated time
+    // Each photo takes ~3-4s (1.5s delay + ~2s VLM processing)
+    const estSeconds = project.photoCount * 4;
+    const estMinutes = Math.floor(estSeconds / 60);
+    const estRemSeconds = estSeconds % 60;
+    const estimatedTime = estMinutes > 0
+      ? `${estMinutes} menit ${estRemSeconds} detik`
+      : `${estRemSeconds} detik`;
+    setAiFilterConfirm({ project, estimatedTime });
+  };
+
+  const handleAiFilterConfirm = async () => {
+    const project = aiFilterConfirm?.project;
+    if (!project) return;
+    setAiFilterConfirm(null);
 
     setAiFilterId(project.id);
     setAiFilterProgress({ current: 0, total: project.photoCount, hidden: 0 });
@@ -1064,7 +1080,7 @@ export default function AdminPanel({
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              handleAiFilter(project);
+                              handleAiFilterClick(project);
                             }}
                             disabled={isSyncing || isTogglingHide || aiFilterId === project.id}
                             className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-[#D4AF37] hover:bg-[#4C2A85]/20 transition-all cursor-pointer"
@@ -1380,6 +1396,61 @@ export default function AdminPanel({
             onClick={(e) => e.stopPropagation()}
           >
             {renderGalleryForm()}
+          </div>
+        </div>
+      )}
+
+      {/* AI Filter Confirmation Modal */}
+      {aiFilterConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="bg-[#120A21] border-2 border-[#D4AF37]/40 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl relative space-y-5 animate-fadeIn">
+            <div className="w-12 h-12 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37] text-[#D4AF37] flex items-center justify-center mx-auto mb-2">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-serif font-bold text-white">
+                Filter AI
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                AI akan menilai kualitas setiap foto di galeri{" "}
+                <strong className="text-[#D4AF37]">&quot;{aiFilterConfirm.project.name}&quot;</strong>
+                {" "}pada skala 1-10. Foto dengan score &lt;5 akan disembunyikan dari pengunjung.
+              </p>
+              <div className="bg-[#1F0F3D]/50 rounded-xl p-3 space-y-1.5 mt-3">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-400">Jumlah foto:</span>
+                  <span className="font-mono font-bold text-[#D4AF37]">{aiFilterConfirm.project.photoCount} foto</span>
+                </div>
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-400">Estimasi waktu:</span>
+                  <span className="font-mono font-bold text-[#D4AF37]">{aiFilterConfirm.estimatedTime}</span>
+                </div>
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-400">Worker requests:</span>
+                  <span className="font-mono font-bold text-slate-300">~{aiFilterConfirm.project.photoCount} requests</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
+                ⚠ Pastikan tab browser tetap terbuka selama proses berjalan.
+                Jangan tutup atau refresh halaman sampai selesai.
+              </p>
+            </div>
+            <div className="flex space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setAiFilterConfirm(null)}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleAiFilterConfirm}
+                className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#dfbb66] text-[#4C2A85] text-xs font-bold tracking-wider uppercase transition-all cursor-pointer shadow-lg active:scale-95"
+              >
+                Mulai Filter AI
+              </button>
+            </div>
           </div>
         </div>
       )}
