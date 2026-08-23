@@ -4,12 +4,12 @@ import { findPhotoById } from "@/lib/queries";
 // GET /api/photo-proxy/download?id=FILE_ID&name=FILENAME
 //
 // Streams the file from Google Drive through our Worker with a custom
-// Content-Disposition header so the file saves with our clean name
-// (e.g. "Lomba Hut RI Ke 81 - 001.jpg" instead of "IMG_0001.JPG").
+// Content-Disposition header so the file saves with our clean name.
 //
-// Uses Response streaming — the Worker just pipes the response body
-// through without buffering the entire file in memory, keeping CPU
-// time minimal for free tier compatibility.
+// Uses multiple strategies to get the actual file from Google Drive:
+// 1. webContentLink (stored in DB during sync) — most reliable
+// 2. uc?export=download with redirect:follow
+// 3. Fallback: redirect to Google Drive (filename = Google's default)
 
 const CACHE_7_DAYS = "public, max-age=604800, s-maxage=604800";
 
@@ -22,24 +22,27 @@ export async function GET(req: NextRequest) {
     return new NextResponse("Missing file id", { status: 400 });
   }
 
-  // Sample mock photo → fetch from Unsplash and stream with our filename
+  // Use RFC 5987 encoding for filenames with special characters
+  const encodedName = encodeURIComponent(fileName).replace(/'/g, "%27");
+
+  // Sample mock photo → fetch from Unsplash
   if (fileId.startsWith("sample-")) {
     const sample = await findPhotoById(fileId);
     if (sample && sample.webContentLink) {
       try {
-        const response = await fetch(sample.webContentLink);
+        const response = await fetch(sample.webContentLink, { redirect: "follow" });
         if (response.ok) {
           return new NextResponse(response.body, {
             status: 200,
             headers: {
-              "Content-Disposition": `attachment; filename="${fileName}"`,
+              "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
               "Content-Type": response.headers.get("content-type") || "image/jpeg",
               "Cache-Control": CACHE_7_DAYS,
             },
           });
         }
       } catch {
-        /* fall through to redirect */
+        /* fall through */
       }
       return NextResponse.redirect(sample.webContentLink, {
         headers: { "Cache-Control": CACHE_7_DAYS },
@@ -47,32 +50,55 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Real Google Drive photo → fetch and stream with our clean filename.
-  // This ensures the browser saves the file as "Gallery Name - 001.jpg"
-  // instead of Google Drive's original filename.
+  // Real Google Drive photo — try multiple strategies to get the file.
   try {
-    const driveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-    const response = await fetch(driveDownloadUrl);
+    // Strategy 1: Use webContentLink from DB (most reliable for shared files)
+    const photo = await findPhotoById(fileId);
+    const urlsToTry: string[] = [];
 
-    if (response.ok) {
-      // Stream the response body through — no buffering, minimal CPU.
-      return new NextResponse(response.body, {
-        status: 200,
-        headers: {
-          "Content-Disposition": `attachment; filename="${fileName}"`,
-          "Content-Type":
-            response.headers.get("content-type") || "application/octet-stream",
-          "Content-Length": response.headers.get("content-length") || "",
-          "Cache-Control": CACHE_7_DAYS,
-        },
-      });
+    if (photo) {
+      if (photo.webContentLink) {
+        urlsToTry.push(photo.webContentLink);
+      }
+    }
+    // Strategy 2: uc?export=download (follows redirects)
+    urlsToTry.push(`https://drive.google.com/uc?export=download&id=${fileId}`);
+    // Strategy 3: thumbnail endpoint with full size (w1600)
+    urlsToTry.push(`https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`);
+
+    for (const url of urlsToTry) {
+      try {
+        const response = await fetch(url, { redirect: "follow" });
+        if (response.ok) {
+          const contentType = response.headers.get("content-type") || "";
+          // Make sure we got an actual image, not an HTML confirmation page
+          if (contentType.startsWith("image/") ||
+              contentType.startsWith("application/octet-stream") ||
+              contentType.startsWith("application/binary")) {
+            return new NextResponse(response.body, {
+              status: 200,
+              headers: {
+                "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
+                "Content-Type": contentType || "image/jpeg",
+                "Content-Length": response.headers.get("content-length") || "",
+                "Cache-Control": CACHE_7_DAYS,
+              },
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[Download] Strategy failed for ${fileId} (${url}):`, err);
+      }
     }
 
-    // Fallback: redirect (filename will be Google's default)
-    return NextResponse.redirect(driveDownloadUrl, {
-      status: 302,
-      headers: { "Cache-Control": CACHE_7_DAYS },
-    });
+    // All strategies failed — redirect as fallback
+    return NextResponse.redirect(
+      `https://drive.google.com/uc?export=download&id=${fileId}`,
+      {
+        status: 302,
+        headers: { "Cache-Control": CACHE_7_DAYS },
+      }
+    );
   } catch (error) {
     console.error("Download Error:", error);
     return new NextResponse("Gagal mengunduh file.", { status: 500 });
