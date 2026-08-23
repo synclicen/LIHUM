@@ -60,6 +60,10 @@ export default function GalleryView({
   const [batchDownloading, setBatchDownloading] = useState(false);
   const [limitMessage, setLimitMessage] = useState("");
 
+  // Server-side pagination state
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   // Password state for private galleries
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordVerifying, setPasswordVerifying] = useState(false);
@@ -111,27 +115,67 @@ export default function GalleryView({
     setVisibleCount(PAGE_SIZE);
   }, [projectId, debouncedQuery, sortBy, unlockedPassword, viewMode]);
 
-  // Auto-load more photos when user scrolls near the bottom of the grid
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  // Auto-load more photos when user scrolls near the bottom.
+  // Two strategies:
+  // 1. If we have more photos in the current client-side batch (visibleCount < photos.length),
+  //    just render more from what we already have.
+  // 2. If we've rendered all client-side photos but server has more (hasMore),
+  //    fetch next batch from server.
+  const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
     const container = e.currentTarget;
     const { scrollTop, scrollHeight, clientHeight } = container;
-    // Load more when user is within 300px of the bottom
-    if (scrollHeight - scrollTop - clientHeight < 300 && project) {
-      const totalPhotos = project.photos?.length || 0;
-      if (visibleCount < totalPhotos) {
-        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalPhotos));
+    if (scrollHeight - scrollTop - clientHeight > 300) return;
+    if (!project || loadingMore) return;
+
+    const totalPhotos = project.photos?.length || 0;
+
+    // Strategy 1: render more from existing client data
+    if (visibleCount < totalPhotos) {
+      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalPhotos));
+      return;
+    }
+
+    // Strategy 2: fetch next batch from server
+    if (hasMore) {
+      setLoadingMore(true);
+      try {
+        const offset = project.photos?.length || 0;
+        const res = await fetch(buildFetchUrl(debouncedQuery, offset, 100), {
+          headers: fetchHeaders,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.photos && data.photos.length > 0) {
+            // Append new photos to existing list
+            setProject((prev) => {
+              if (!prev) return data;
+              return {
+                ...prev,
+                photos: [...(prev.photos || []), ...data.photos],
+              };
+            });
+            setHasMore(data.pagination?.hasMore || false);
+          } else {
+            setHasMore(false);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load more photos:", err);
+      } finally {
+        setLoadingMore(false);
       }
     }
   };
 
-  // Build the fetch URL with optional password + search query + sort
-  const buildFetchUrl = (search: string) => {
+  // Build the fetch URL with optional password + search query + sort + pagination
+  const buildFetchUrl = (search: string, offset = 0, limit = 100) => {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     if (unlockedPassword) params.set("password", unlockedPassword);
     if (sortBy && sortBy !== "default") params.set("sort", sortBy);
-    const qs = params.toString();
-    return `/api/projects/${projectId}${qs ? `?${qs}` : ""}`;
+    params.set("offset", String(offset));
+    params.set("limit", String(limit));
+    return `/api/projects/${projectId}?${params.toString()}`;
   };
 
   // Request headers — include admin email so private galleries are unlocked for admins
@@ -139,17 +183,20 @@ export default function GalleryView({
     ? { "x-user-email": userEmail }
     : {};
 
-  // Fetch project details (with photos list)
+  // Fetch project details (first batch of photos — server-side paginated)
   useEffect(() => {
     const fetchProjectDetails = async () => {
       setLoading(true);
       try {
-        const res = await fetch(buildFetchUrl(debouncedQuery), {
+        // Request first 100 photos only (not all 1614)
+        const res = await fetch(buildFetchUrl(debouncedQuery, 0, 100), {
           headers: fetchHeaders,
         });
         if (!res.ok) throw new Error("Gagal mengambil data galeri.");
         const data = await res.json();
         setProject(data);
+        setHasMore(data.pagination?.hasMore || false);
+        setVisibleCount(PAGE_SIZE); // reset client-side rendering count
       } catch (err) {
         console.error(err);
       } finally {
@@ -831,22 +878,59 @@ export default function GalleryView({
                 </motion.div>
               )}
 
-              {/* Load More button — shown when there are more photos to display */}
-              {visibleCount < (project.photos?.length || 0) && (
+              {/* Load More button — shown when there are more photos to display or fetch */}
+              {(visibleCount < (project.photos?.length || 0) || hasMore) && (
                 <div className="flex flex-col items-center justify-center py-8 gap-3">
                   <p className="text-xs text-slate-400 font-mono">
-                    Menampilkan {visibleCount} dari {project.photos.length} foto
+                    Menampilkan {visibleCount} dari {project.photoCount || project.photos.length} foto
                   </p>
                   <button
                     type="button"
-                    onClick={() =>
-                      setVisibleCount((prev) =>
-                        Math.min(prev + PAGE_SIZE, project.photos.length)
-                      )
-                    }
-                    className="px-6 py-2.5 rounded-xl bg-[#4C2A85] border border-[#D4AF37]/35 hover:bg-[#5a329d] hover:border-[#D4AF37] text-white text-xs font-bold tracking-wide transition-all shadow-md"
+                    onClick={() => {
+                      // If we have more client-side photos, render them
+                      if (visibleCount < (project.photos?.length || 0)) {
+                        setVisibleCount((prev) =>
+                          Math.min(prev + PAGE_SIZE, project.photos.length)
+                        );
+                      }
+                      // If we need more from server, handleScroll logic will fetch them
+                      // (triggered by the scroll position after button click)
+                      if (visibleCount >= (project.photos?.length || 0) && hasMore) {
+                        // Manually trigger server fetch
+                        setLoadingMore(true);
+                        fetch(buildFetchUrl(debouncedQuery, project.photos?.length || 0, 100), {
+                          headers: fetchHeaders,
+                        })
+                          .then((res) => res.json())
+                          .then((data) => {
+                            if (data.photos && data.photos.length > 0) {
+                              setProject((prev) => {
+                                if (!prev) return data;
+                                return {
+                                  ...prev,
+                                  photos: [...(prev.photos || []), ...data.photos],
+                                };
+                              });
+                              setHasMore(data.pagination?.hasMore || false);
+                            } else {
+                              setHasMore(false);
+                            }
+                          })
+                          .catch((err) => console.warn("Load more failed:", err))
+                          .finally(() => setLoadingMore(false));
+                      }
+                    }}
+                    disabled={loadingMore}
+                    className="px-6 py-2.5 rounded-xl bg-[#4C2A85] border border-[#D4AF37]/35 hover:bg-[#5a329d] hover:border-[#D4AF37] text-white text-xs font-bold tracking-wide transition-all shadow-md disabled:opacity-50"
                   >
-                    Muat Foto Lainnya
+                    {loadingMore ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Memuat...
+                      </span>
+                    ) : (
+                      "Muat Foto Lainnya"
+                    )}
                   </button>
                 </div>
               )}

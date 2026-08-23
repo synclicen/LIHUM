@@ -114,9 +114,24 @@ export async function GET(
     filtered = photos.filter((p) => p.name.toLowerCase().includes(q));
   }
 
+  // ── Server-side pagination ──
+  // Return only `limit` photos starting from `offset` to avoid sending
+  // 1614 photos (749KB JSON) in a single request. Client requests more
+  // via `?offset=X&limit=Y` as user scrolls (infinite scroll).
+  const offsetParam = Math.max(0, parseInt(searchParams.get("offset") || "0", 10));
+  const limitParam = Math.min(100, parseInt(searchParams.get("limit") || "100", 10));
+  const totalFiltered = filtered.length;
+  const paginatedPhotos = filtered.slice(offsetParam, offsetParam + limitParam);
+
   return NextResponse.json({
     ...projectOut(project),
-    photos: filtered.map(photoOut),
+    photos: paginatedPhotos.map(photoOut),
+    pagination: {
+      offset: offsetParam,
+      limit: limitParam,
+      total: totalFiltered,
+      hasMore: offsetParam + limitParam < totalFiltered,
+    },
   });
 }
 
