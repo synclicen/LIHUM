@@ -393,6 +393,304 @@ export default function AdminPanel({
     }
   };
 
+  // ── Gallery Form Renderer ──
+  // Renders the create/edit form. Used in two places:
+  //  1. Inline in the left panel (for "create new" mode)
+  //  2. Inside a modal popup (for "edit" mode — so admin doesn't scroll up)
+  const renderGalleryForm = () => (
+    <div className="bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl p-6 shadow-2xl relative backdrop-blur-sm self-start">
+      <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-[#D4AF37]/15">
+        <FolderKanban className="w-5 h-5 text-[#D4AF37]" />
+        <h2 className="text-md font-serif font-bold text-white">
+          {editingId ? "Ubah Pengaturan Galeri" : "Buat Galeri Baru"}
+        </h2>
+      </div>
+
+      {/* Status Alerts */}
+      {errorMsg && (
+        <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-300 rounded-lg text-xs mb-4">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="flex items-start space-x-2 p-3 bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 rounded-lg text-xs mb-4">
+          <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+          <span>{successMsg}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+            Nama Kegiatan
+          </label>
+          <input
+            type="text"
+            placeholder="Contoh: Taman Bunga Indah"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+            Deskripsi Singkat
+          </label>
+          <textarea
+            placeholder="Berikan info tentang lokasi ini untuk pengunjung..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 resize-none transition-all"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5 flex items-center justify-between">
+            <span>Link Folder Google Drive</span>
+            <span className="group relative cursor-pointer">
+              <HelpCircle className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span className="absolute bottom-full right-0 w-72 bg-slate-950 text-[10px] text-slate-300 p-2.5 rounded-lg border border-[#D4AF37]/20 shadow-2xl opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all pointer-events-none z-50">
+                Pergi ke Google Drive, klik kanan folder, pilih Bagikan
+                &gt; Siapa saja yang memiliki link dapat melihat. Lalu
+                salin link-nya dan tempel di sini.{" "}
+                <strong className="text-[#D4AF37]">
+                  Semua subfolder di dalamnya akan otomatis ikut terscan
+                </strong>{" "}
+                — cocok untuk hasil foto yang sudah dikelompokkan per
+                petugas.
+              </span>
+            </span>
+          </label>
+          <div className="relative">
+            <input
+              type="url"
+              placeholder="https://drive.google.com/drive/folders/ID_FOLDER..."
+              value={driveFolderUrl}
+              onChange={(e) => setDriveFolderUrl(e.target.value)}
+              className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
+              required
+            />
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 flex items-center space-x-1">
+            <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+            <span>
+              Salin-tempel tautan folder Drive publik Anda.{" "}
+              <strong className="text-[#D4AF37]/80">
+                Subfolder di dalamnya ikut terscan otomatis.
+              </strong>
+            </span>
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+            Bagaimana Foto Ditampilkan ke Umum?
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setDisplayMode("all")}
+              className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                displayMode === "all"
+                  ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                  : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center space-x-1">
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Semua Foto</span>
+              </div>
+              <span className="text-[9px] text-slate-300 text-center font-normal">
+                Seketika tampil saat diklik
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDisplayMode("search")}
+              className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                displayMode === "search"
+                  ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                  : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center space-x-1">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Hanya Pencarian</span>
+              </div>
+              <span className="text-[9px] text-slate-300 text-center font-normal">
+                Wajib ketik nama untuk melihat
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Visibility (Public/Private) Section */}
+        <div>
+          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+            Siapa yang Bisa Melihat Foto?
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setVisibility("public")}
+              className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                visibility === "public"
+                  ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                  : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center space-x-1">
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Umum</span>
+              </div>
+              <span className="text-[9px] text-slate-300 text-center font-normal">
+                Semua pengunjung bebas melihat
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVisibility("private")}
+              className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
+                visibility === "private"
+                  ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
+                  : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center space-x-1">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Privat</span>
+              </div>
+              <span className="text-[9px] text-slate-300 text-center font-normal">
+                Perlu password untuk membuka
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Password field — only shown when visibility is private */}
+        {visibility === "private" && (
+          <div className="space-y-1.5 animate-fadeIn">
+            <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
+              Password Galeri
+            </label>
+            <input
+              type="text"
+              placeholder={
+                isEditing
+                  ? "Kosongkan jika tidak ingin mengubah password"
+                  : "Masukkan password (min. 3 karakter)"
+              }
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-mono"
+              autoComplete="off"
+            />
+            <p className="text-[10px] text-slate-400 flex items-center space-x-1">
+              <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+              <span>
+                Bagikan password ini hanya kepada kalangan yang Anda
+                izinkan. Pengunjung lain akan diminta menghubungi admin.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {/* Auto Sync Settings Section */}
+        <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+              Sinkron Otomatis
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoSyncEnabled}
+                onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
+              <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
+                {autoSyncEnabled ? "AKTIF" : "NONAKTIF"}
+              </span>
+            </label>
+          </div>
+
+          {autoSyncEnabled && (
+            <div className="space-y-1.5 animate-fadeIn">
+              <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                Interval Waktu:
+              </label>
+              <select
+                value={autoSyncInterval}
+                onChange={(e) =>
+                  setAutoSyncInterval(e.target.value as any)
+                }
+                className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
+              >
+                <option className="bg-[#120A21]" value="30s">
+                  ⚡ Realtime (30 Detik)
+                </option>
+                <option className="bg-[#120A21]" value="1m">
+                  Setiap 1 Menit
+                </option>
+                <option className="bg-[#120A21]" value="3m">
+                  Setiap 3 Menit
+                </option>
+                <option className="bg-[#120A21]" value="5m">
+                  Setiap 5 Menit
+                </option>
+                <option className="bg-[#120A21]" value="1h">
+                  Setiap 1 Jam
+                </option>
+                <option className="bg-[#120A21]" value="6h">
+                  Setiap 6 Jam
+                </option>
+              </select>
+              <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+                *Tautan sinkronisasi berjalan otomatis di background ketika
+                browser Admin/Manajer terhubung.{" "}
+                <span className="text-[#D4AF37]/80">
+                  Pilih <strong>Realtime</strong> agar foto baru/perubahan
+                  di Google Drive langsung tersinkron tiap 30 detik.
+                </span>
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex space-x-2 pt-2">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
+          >
+            {isLoading
+              ? "Memproses..."
+              : editingId
+              ? "Terapkan Perubahan"
+              : "Deploy Gallery"}
+          </button>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="py-2.5 px-3.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-xs transition-all"
+            >
+              Batal
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+
   return (
     <div id="admin-panel-container" className="space-y-6">
       {/* Tab bar (only if admin) */}
@@ -441,301 +739,12 @@ export default function AdminPanel({
       {/* Conditional Tabs render */}
       {activeTab === "projects" ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Form Section */}
-          <div className="lg:col-span-1 bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl p-6 shadow-2xl relative backdrop-blur-sm self-start">
-            <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-[#D4AF37]/15">
-              <FolderKanban className="w-5 h-5 text-[#D4AF37]" />
-              <h2 className="text-md font-serif font-bold text-white">
-                {editingId ? "Ubah Pengaturan Galeri" : "Buat Galeri Baru"}
-              </h2>
-            </div>
+          {/* Form Section — only shown inline for "create new" mode.
+              Edit mode uses a modal popup (below) so admin doesn't need to scroll up. */}
+          {!isEditing && renderGalleryForm()}
 
-            {/* Status Alerts */}
-            {errorMsg && (
-              <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-300 rounded-lg text-xs mb-4">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-                <span>{errorMsg}</span>
-              </div>
-            )}
-
-            {successMsg && (
-              <div className="flex items-start space-x-2 p-3 bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 rounded-lg text-xs mb-4">
-                <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
-                <span>{successMsg}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
-                  Nama Kegiatan
-                </label>
-                <input
-                  type="text"
-                  placeholder="Contoh: Taman Bunga Indah"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
-                  Deskripsi Singkat
-                </label>
-                <textarea
-                  placeholder="Berikan info tentang lokasi ini untuk pengunjung..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 resize-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-                  <span>Link Folder Google Drive</span>
-                  <span className="group relative cursor-pointer">
-                    <HelpCircle className="w-3.5 h-3.5 text-[#D4AF37]" />
-                    <span className="absolute bottom-full right-0 w-72 bg-slate-950 text-[10px] text-slate-300 p-2.5 rounded-lg border border-[#D4AF37]/20 shadow-2xl opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all pointer-events-none z-50">
-                      Pergi ke Google Drive, klik kanan folder, pilih Bagikan
-                      &gt; Siapa saja yang memiliki link dapat melihat. Lalu
-                      salin link-nya dan tempel di sini.{" "}
-                      <strong className="text-[#D4AF37]">
-                        Semua subfolder di dalamnya akan otomatis ikut terscan
-                      </strong>{" "}
-                      — cocok untuk hasil foto yang sudah dikelompokkan per
-                      petugas.
-                    </span>
-                  </span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="url"
-                    placeholder="https://drive.google.com/drive/folders/ID_FOLDER..."
-                    value={driveFolderUrl}
-                    onChange={(e) => setDriveFolderUrl(e.target.value)}
-                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all"
-                    required
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1 flex items-center space-x-1">
-                  <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-                  <span>
-                    Salin-tempel tautan folder Drive publik Anda.{" "}
-                    <strong className="text-[#D4AF37]/80">
-                      Subfolder di dalamnya ikut terscan otomatis.
-                    </strong>
-                  </span>
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
-                  Bagaimana Foto Ditampilkan ke Umum?
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setDisplayMode("all")}
-                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
-                      displayMode === "all"
-                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
-                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Semua Foto</span>
-                    </div>
-                    <span className="text-[9px] text-slate-300 text-center font-normal">
-                      Seketika tampil saat diklik
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDisplayMode("search")}
-                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
-                      displayMode === "search"
-                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
-                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <Lock className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Hanya Pencarian</span>
-                    </div>
-                    <span className="text-[9px] text-slate-300 text-center font-normal">
-                      Wajib ketik nama untuk melihat
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Visibility (Public/Private) Section */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
-                  Siapa yang Bisa Melihat Foto?
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setVisibility("public")}
-                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
-                      visibility === "public"
-                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
-                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Umum</span>
-                    </div>
-                    <span className="text-[9px] text-slate-300 text-center font-normal">
-                      Semua pengunjung bebas melihat
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setVisibility("private")}
-                    className={`py-2 px-3.5 rounded-xl border text-xs font-semibold flex flex-col items-center justify-center space-y-1 transition-all ${
-                      visibility === "private"
-                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70 shadow-lg shadow-black/20"
-                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1">
-                      <Lock className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Privat</span>
-                    </div>
-                    <span className="text-[9px] text-slate-300 text-center font-normal">
-                      Perlu password untuk membuka
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Password field — only shown when visibility is private */}
-              {visibility === "private" && (
-                <div className="space-y-1.5 animate-fadeIn">
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest mb-1.5">
-                    Password Galeri
-                  </label>
-                  <input
-                    type="text"
-                    placeholder={
-                      isEditing
-                        ? "Kosongkan jika tidak ingin mengubah password"
-                        : "Masukkan password (min. 3 karakter)"
-                    }
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-mono"
-                    autoComplete="off"
-                  />
-                  <p className="text-[10px] text-slate-400 flex items-center space-x-1">
-                    <Info className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-                    <span>
-                      Bagikan password ini hanya kepada kalangan yang Anda
-                      izinkan. Pengunjung lain akan diminta menghubungi admin.
-                    </span>
-                  </p>
-                </div>
-              )}
-
-              {/* Auto Sync Settings Section */}
-              <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
-                    Sinkron Otomatis
-                  </span>
-                  <label className="relative inline-flex items-center cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={autoSyncEnabled}
-                      onChange={(e) => setAutoSyncEnabled(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
-                    <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
-                      {autoSyncEnabled ? "AKTIF" : "NONAKTIF"}
-                    </span>
-                  </label>
-                </div>
-
-                {autoSyncEnabled && (
-                  <div className="space-y-1.5 animate-fadeIn">
-                    <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                      Interval Waktu:
-                    </label>
-                    <select
-                      value={autoSyncInterval}
-                      onChange={(e) =>
-                        setAutoSyncInterval(e.target.value as any)
-                      }
-                      className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
-                    >
-                      <option className="bg-[#120A21]" value="30s">
-                        ⚡ Realtime (30 Detik)
-                      </option>
-                      <option className="bg-[#120A21]" value="1m">
-                        Setiap 1 Menit
-                      </option>
-                      <option className="bg-[#120A21]" value="3m">
-                        Setiap 3 Menit
-                      </option>
-                      <option className="bg-[#120A21]" value="5m">
-                        Setiap 5 Menit
-                      </option>
-                      <option className="bg-[#120A21]" value="1h">
-                        Setiap 1 Jam
-                      </option>
-                      <option className="bg-[#120A21]" value="6h">
-                        Setiap 6 Jam
-                      </option>
-                    </select>
-                    <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
-                      *Tautan sinkronisasi berjalan otomatis di background ketika
-                      browser Admin/Manajer terhubung.{" "}
-                      <span className="text-[#D4AF37]/80">
-                        Pilih <strong>Realtime</strong> agar foto baru/perubahan
-                        di Google Drive langsung tersinkron tiap 30 detik.
-                      </span>
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] font-extrabold text-xs tracking-wider uppercase hover:bg-[#dfbb66] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md"
-                >
-                  {isLoading
-                    ? "Memproses..."
-                    : editingId
-                    ? "Terapkan Perubahan"
-                    : "Deploy Gallery"}
-                </button>
-                {isEditing && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="py-2.5 px-3.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-xs transition-all"
-                  >
-                    Batal
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-
-          {/* Grid of Projects */}
-          <div className="lg:col-span-2">
+          {/* Grid of Projects — full width when editing (form is in modal) */}
+          <div className={isEditing ? "lg:col-span-3" : "lg:col-span-2"}>
             <div className="flex items-center justify-between mb-5 pb-3 border-b border-[#D4AF37]/15">
               <div className="flex items-center space-x-2.5">
                 <Library className="w-5 h-5 text-[#D4AF37]" />
@@ -1196,6 +1205,21 @@ export default function AdminPanel({
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Gallery Modal — popup di tengah layar, no scroll needed */}
+      {isEditing && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto"
+          onClick={resetForm}
+        >
+          <div
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto custom-scrollbar my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {renderGalleryForm()}
           </div>
         </div>
       )}
