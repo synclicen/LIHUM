@@ -256,7 +256,7 @@ export default function AdminPanel({
         ? ` dari Shared Drive "${data.sharedDriveName}"`
         : "";
       const filterInfo = data.filteredStats
-        ? ` (filter: ${data.filteredStats.duplicates} duplikat dihapus, ${data.filteredStats.smallFiles} file kecil difilter dari ${data.filteredStats.total} total)`
+        ? ` (filter: ${data.filteredStats.smallFiles} file kecil difilter dari ${data.filteredStats.total} total)`
         : "";
 
       if (data.photoCount === 0) {
@@ -714,8 +714,8 @@ export default function AdminPanel({
             <div className="space-y-1.5 animate-fadeIn">
               <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
                 Saat sync, sistem akan otomatis:
-                <br />• <strong className="text-[#D4AF37]/80">Hapus foto duplikat/burst</strong> — foto dengan nama mirip (IMG_0001, 0002, 0003) diambil dalam burst, hanya yang terbesar disimpan
                 <br />• <strong className="text-[#D4AF37]/80">Filter file &lt; 100KB</strong> — skip thumbnail/low quality
+                <br />• Untuk pilih foto terbaik dari yang mirip, gunakan <strong className="text-[#D4AF37]/80">Filter AI (✨)</strong> setelah sync
               </p>
             </div>
           )}
