@@ -65,7 +65,13 @@ export async function GET(
   const VALID_SORTS: PhotoSort[] = ["default", "name-asc", "name-desc", "modified-desc", "modified-asc"];
   const sort: PhotoSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as PhotoSort) : "default";
 
-  const data = await getProjectWithPhotos(id, sort);
+  // Admin/manager sees all photos (including AI-hidden). Public visitors
+  // only see photos not hidden by AI filter.
+  const userEmail = req.headers.get("x-user-email") || undefined;
+  const userRole = await getAccountRole(userEmail);
+  const isAdmin = userRole !== null;
+
+  const data = await getProjectWithPhotos(id, sort, isAdmin);
   if (!data) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }

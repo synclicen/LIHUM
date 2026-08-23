@@ -34,6 +34,7 @@ export interface PhotoRow {
   size: string;
   createdTime: string;
   modifiedTime: string;
+  aiHidden: number; // 0 | 1
   projectId: string;
 }
 
@@ -124,6 +125,7 @@ const asPhoto = (r: Record<string, unknown>): PhotoRow => ({
   size: String(r.size ?? ""),
   createdTime: String(r.createdTime ?? ""),
   modifiedTime: String(r.modifiedTime ?? ""),
+  aiHidden: Number(r.aiHidden ?? 0),
   projectId: String(r.projectId ?? ""),
 });
 const asAccount = (r: Record<string, unknown>): AccountRow => ({
@@ -183,20 +185,48 @@ const SORT_CLAUSES: Record<PhotoSort, string> = {
 
 export async function getProjectWithPhotos(
   id: string,
-  sort: PhotoSort = "default"
+  sort: PhotoSort = "default",
+  includeAiHidden: boolean = false
 ): Promise<{ project: ProjectRow; photos: PhotoRow[] } | null> {
   const project = await findProjectById(id);
   if (!project) return null;
   const orderClause = SORT_CLAUSES[sort] || SORT_CLAUSES.default;
-  // orderClause is from a fixed whitelist (not user string) — safe to interpolate.
+  const whereClause = includeAiHidden
+    ? "WHERE projectId = ?"
+    : "WHERE projectId = ? AND aiHidden = 0";
   const r = await db.execute({
-    sql: `SELECT * FROM Photo WHERE projectId = ? ORDER BY ${orderClause}`,
+    sql: `SELECT * FROM Photo ${whereClause} ORDER BY ${orderClause}`,
     args: [id],
   });
   return {
     project,
     photos: r.rows.map((row) => asPhoto(row as Record<string, unknown>)),
   };
+}
+
+/** Set aiHidden flag for a specific photo (used by AI filter). */
+export async function setPhotoAiHidden(
+  projectId: string,
+  photoId: string,
+  aiHidden: boolean
+): Promise<void> {
+  await db.execute({
+    sql: "UPDATE Photo SET aiHidden = ? WHERE projectId = ? AND id = ?",
+    args: [aiHidden ? 1 : 0, projectId, photoId],
+  });
+}
+
+/** Reset all aiHidden flags for a project (undo AI filter). */
+export async function resetAiHidden(projectId: string): Promise<number> {
+  await db.execute({
+    sql: "UPDATE Photo SET aiHidden = 0 WHERE projectId = ?",
+    args: [projectId],
+  });
+  const r = await db.execute({
+    sql: "SELECT COUNT(*) as c FROM Photo WHERE projectId = ? AND aiHidden = 0",
+    args: [projectId],
+  });
+  return Number((r.rows[0] as Record<string, unknown>)?.c ?? 0);
 }
 
 export async function createProject(input: NewProjectInput): Promise<ProjectRow> {

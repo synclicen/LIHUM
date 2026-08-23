@@ -121,6 +121,8 @@ export async function ensureSchema(): Promise<void> {
 
     // Migrations: add modifiedTime to Photo table for "Date Modified" sort.
     await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
+    // aiHidden: 0 = visible, 1 = hidden by AI filter (low quality)
+    await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
   })();
   try {
     await schemaPromise;

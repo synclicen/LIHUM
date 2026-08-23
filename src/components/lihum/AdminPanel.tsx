@@ -24,6 +24,7 @@ import {
   Trash,
   Eye,
   EyeOff,
+  Sparkles,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -73,6 +74,8 @@ export default function AdminPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [togglingHideId, setTogglingHideId] = useState<string | null>(null);
+  const [aiFilterId, setAiFilterId] = useState<string | null>(null);
+  const [aiFilterProgress, setAiFilterProgress] = useState({ current: 0, total: 0, hidden: 0 });
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -315,6 +318,94 @@ export default function AdminPanel({
       setErrorMsg(err.message || "Gagal mengubah visibilitas galeri.");
     } finally {
       setTogglingHideId(null);
+    }
+  };
+
+  // ── AI Filter: score each photo via VLM, hide low-quality ones ──
+  // Processes photos one by one with 2s delay between calls to avoid
+  // rate limiting. Shows live progress to admin.
+  const handleAiFilter = async (project: ProjectSummary) => {
+    if (project.photoCount === 0) {
+      setErrorMsg("Galeri belum memiliki foto. Sinkron Drive dulu sebelum filter AI.");
+      return;
+    }
+    if (project.photoCount > 200) {
+      setErrorMsg(`Filter AI dibatasi maksimal 200 foto (galeri ini: ${project.photoCount}). Untuk galeri besar, gunakan Filter Otomatis (dedup) saja.`);
+      return;
+    }
+
+    setAiFilterId(project.id);
+    setAiFilterProgress({ current: 0, total: project.photoCount, hidden: 0 });
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    try {
+      // Fetch all photo IDs for this project
+      const photosRes = await fetch(`/api/projects/${project.id}`, {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!photosRes.ok) throw new Error("Gagal mengambil daftar foto.");
+      const photosData = await photosRes.json();
+      const photoIds: string[] = (photosData.photos || []).map((p: any) => p.id);
+
+      let hiddenCount = 0;
+      for (let i = 0; i < photoIds.length; i++) {
+        setAiFilterProgress({ current: i + 1, total: photoIds.length, hidden: hiddenCount });
+
+        try {
+          const scoreRes = await fetch(`/api/projects/${project.id}/ai-score`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-user-email": userEmail,
+            },
+            body: JSON.stringify({ photoId: photoIds[i] }),
+          });
+
+          if (scoreRes.ok) {
+            const scoreData = await scoreRes.json();
+            if (scoreData.hidden) hiddenCount++;
+          }
+        } catch (err) {
+          console.warn(`[AI-Filter] Error on photo ${photoIds[i]}:`, err);
+        }
+
+        // 1.5s delay between photos to avoid rate limiting
+        if (i < photoIds.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
+
+      setSuccessMsg(
+        `Filter AI selesai untuk "${project.name}". ${hiddenCount} foto berkualitas rendah disembunyikan dari ${photoIds.length} total foto.`
+      );
+      onRefresh();
+      setTimeout(() => setSuccessMsg(""), 6000);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "Gagal menjalankan filter AI.");
+    } finally {
+      setAiFilterId(null);
+      setAiFilterProgress({ current: 0, total: 0, hidden: 0 });
+    }
+  };
+
+  // Reset AI filter — unhide all AI-hidden photos
+  const handleAiFilterReset = async (projectId: string) => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/ai-score`, {
+        method: "DELETE",
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal reset filter AI.");
+      const data = await res.json();
+      setSuccessMsg(data.message || "Filter AI direset.");
+      onRefresh();
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal reset filter AI.");
     }
   };
 
@@ -967,6 +1058,24 @@ export default function AdminPanel({
                               <EyeOff className="w-3.5 h-3.5" />
                             )}
                           </button>
+                          {/* AI Filter button — score photo quality via VLM */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleAiFilter(project);
+                            }}
+                            disabled={isSyncing || isTogglingHide || aiFilterId === project.id}
+                            className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-[#D4AF37] hover:bg-[#4C2A85]/20 transition-all cursor-pointer"
+                            title="Filter AI — sembunyikan foto berkualitas rendah (maks 200 foto)"
+                          >
+                            {aiFilterId === project.id ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1014,6 +1123,29 @@ export default function AdminPanel({
                         <div className="mt-2 text-[10px] bg-amber-500/5 border border-amber-500/10 text-amber-400/80 p-1.5 rounded text-center font-semibold">
                           ⚠ Belum disinkron. Klik &quot;Sinkron Drive&quot; agar
                           foto tampil!
+                        </div>
+                      )}
+
+                      {/* AI Filter progress */}
+                      {aiFilterId === project.id && (
+                        <div className="mt-2 p-2 rounded-lg bg-[#4C2A85]/30 border border-[#D4AF37]/30">
+                          <div className="flex items-center justify-between text-[9px] font-mono text-[#D4AF37] mb-1">
+                            <span>Filter AI berjalan...</span>
+                            <span>{aiFilterProgress.current}/{aiFilterProgress.total}</span>
+                          </div>
+                          <div className="h-1.5 bg-[#1F0F3D] rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-[#D4AF37] transition-all duration-300"
+                              style={{
+                                width: `${(aiFilterProgress.current / aiFilterProgress.total) * 100}%`,
+                              }}
+                            />
+                          </div>
+                          {aiFilterProgress.hidden > 0 && (
+                            <p className="text-[8px] text-slate-400 mt-1 font-mono">
+                              {aiFilterProgress.hidden} foto disembunyikan
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
