@@ -74,9 +74,6 @@ export default function AdminPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [togglingHideId, setTogglingHideId] = useState<string | null>(null);
-  const [aiFilterId, setAiFilterId] = useState<string | null>(null);
-  const [aiFilterProgress, setAiFilterProgress] = useState({ current: 0, total: 0, hidden: 0 });
-  const [aiFilterConfirm, setAiFilterConfirm] = useState<{ project: ProjectSummary; estimatedTime: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -273,11 +270,72 @@ export default function AdminPanel({
       );
       onRefresh();
 
-      // Auto open synced gallery for viewing
-      setTimeout(() => {
-        setSuccessMsg("");
-        onSelectProject(projectId, false);
-      }, 3000);
+      // If autoFilterEnabled is on, run AI quality scoring in background.
+      // Admin doesn't need to do anything — this runs automatically after sync.
+      // Photos are scored in batches of 5, with each batch as 1 Worker request.
+      if (project.autoFilterEnabled && data.photoCount > 0) {
+        setSuccessMsg(
+          `Sync selesai (${data.photoCount} foto). Filter AI sedang berjalan di background...`
+        );
+
+        // Run AI scoring in background — don't block the UI
+        (async () => {
+          let offset = 0;
+          let totalHidden = 0;
+          let totalProcessed = 0;
+          const total = data.photoCount;
+
+          while (true) {
+            try {
+              const scoreRes = await fetch(`/api/projects/${projectId}/ai-score`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-user-email": userEmail,
+                },
+                body: JSON.stringify({ offset }),
+              });
+
+              if (!scoreRes.ok) {
+                console.error("[AI-Background] Batch failed:", await scoreRes.text());
+                break;
+              }
+
+              const scoreData = await scoreRes.json();
+              totalHidden += scoreData.hidden || 0;
+              totalProcessed += scoreData.processed || 0;
+              offset = scoreData.offset;
+
+              // Update progress message
+          setSuccessMsg(
+            `Filter AI berjalan... ${totalProcessed}/${total} foto diperiksa, ${totalHidden} disembunyikan`
+          );
+
+              if (scoreData.done) {
+                break;
+              }
+
+              // Small delay between batches to be gentle on the server
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            } catch (err) {
+              console.error("[AI-Background] Error:", err);
+              break;
+            }
+          }
+
+          setSuccessMsg(
+            `Filter AI selesai! ${totalHidden} foto berkualitas rendah disembunyikan dari ${totalProcessed} total foto.`
+          );
+          onRefresh();
+          setTimeout(() => setSuccessMsg(""), 5000);
+        })();
+      } else {
+        // No AI filter — just auto open synced gallery
+        setTimeout(() => {
+          setSuccessMsg("");
+          onSelectProject(projectId, false);
+        }, 3000);
+      }
     } catch (err: any) {
       console.error(err);
       setErrorMsg(
@@ -319,109 +377,6 @@ export default function AdminPanel({
       setErrorMsg(err.message || "Gagal mengubah visibilitas galeri.");
     } finally {
       setTogglingHideId(null);
-    }
-  };
-
-  // ── AI Filter: score each photo via VLM, hide low-quality ones ──
-  // Shows confirmation modal first, then processes photos one by one with
-  // 1.5s delay between calls to avoid rate limiting.
-  const handleAiFilterClick = (project: ProjectSummary) => {
-    if (project.photoCount === 0) {
-      setErrorMsg("Galeri belum memiliki foto. Sinkron Drive dulu sebelum filter AI.");
-      return;
-    }
-    if (project.photoCount > 200) {
-      setErrorMsg(`Filter AI dibatasi maksimal 200 foto (galeri ini: ${project.photoCount}). Untuk galeri besar, gunakan Filter Otomatis saja.`);
-      return;
-    }
-    // Show confirmation modal with estimated time
-    // Each photo takes ~3-4s (1.5s delay + ~2s VLM processing)
-    const estSeconds = project.photoCount * 4;
-    const estMinutes = Math.floor(estSeconds / 60);
-    const estRemSeconds = estSeconds % 60;
-    const estimatedTime = estMinutes > 0
-      ? `${estMinutes} menit ${estRemSeconds} detik`
-      : `${estRemSeconds} detik`;
-    setAiFilterConfirm({ project, estimatedTime });
-  };
-
-  const handleAiFilterConfirm = async () => {
-    const project = aiFilterConfirm?.project;
-    if (!project) return;
-    setAiFilterConfirm(null);
-
-    setAiFilterId(project.id);
-    setAiFilterProgress({ current: 0, total: project.photoCount, hidden: 0 });
-    setErrorMsg("");
-    setSuccessMsg("");
-
-    try {
-      // Fetch all photo IDs for this project
-      const photosRes = await fetch(`/api/projects/${project.id}`, {
-        headers: { "x-user-email": userEmail },
-      });
-      if (!photosRes.ok) throw new Error("Gagal mengambil daftar foto.");
-      const photosData = await photosRes.json();
-      const photoIds: string[] = (photosData.photos || []).map((p: any) => p.id);
-
-      let hiddenCount = 0;
-      for (let i = 0; i < photoIds.length; i++) {
-        setAiFilterProgress({ current: i + 1, total: photoIds.length, hidden: hiddenCount });
-
-        try {
-          const scoreRes = await fetch(`/api/projects/${project.id}/ai-score`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-user-email": userEmail,
-            },
-            body: JSON.stringify({ photoId: photoIds[i] }),
-          });
-
-          if (scoreRes.ok) {
-            const scoreData = await scoreRes.json();
-            if (scoreData.hidden) hiddenCount++;
-          }
-        } catch (err) {
-          console.warn(`[AI-Filter] Error on photo ${photoIds[i]}:`, err);
-        }
-
-        // 1.5s delay between photos to avoid rate limiting
-        if (i < photoIds.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        }
-      }
-
-      setSuccessMsg(
-        `Filter AI selesai untuk "${project.name}". ${hiddenCount} foto berkualitas rendah disembunyikan dari ${photoIds.length} total foto.`
-      );
-      onRefresh();
-      setTimeout(() => setSuccessMsg(""), 6000);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || "Gagal menjalankan filter AI.");
-    } finally {
-      setAiFilterId(null);
-      setAiFilterProgress({ current: 0, total: 0, hidden: 0 });
-    }
-  };
-
-  // Reset AI filter — unhide all AI-hidden photos
-  const handleAiFilterReset = async (projectId: string) => {
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const res = await fetch(`/api/projects/${projectId}/ai-score`, {
-        method: "DELETE",
-        headers: { "x-user-email": userEmail },
-      });
-      if (!res.ok) throw new Error("Gagal reset filter AI.");
-      const data = await res.json();
-      setSuccessMsg(data.message || "Filter AI direset.");
-      onRefresh();
-      setTimeout(() => setSuccessMsg(""), 4000);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Gagal reset filter AI.");
     }
   };
 
@@ -729,9 +684,9 @@ export default function AdminPanel({
           {autoFilterEnabled && (
             <div className="space-y-1.5 animate-fadeIn">
               <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
-                Saat sync, sistem akan otomatis:
+                Saat sync, sistem akan otomatis di background:
                 <br />• <strong className="text-[#D4AF37]/80">Filter file &lt; 100KB</strong> — skip thumbnail/low quality
-                <br />• Untuk pilih foto terbaik dari yang mirip, gunakan <strong className="text-[#D4AF37]/80">Filter AI (✨)</strong> setelah sync
+                <br />• <strong className="text-[#D4AF37]/80">AI Quality Scoring</strong> — AI menilai kualitas tiap foto, foto jelek (score &lt;5) disembunyikan otomatis
               </p>
             </div>
           )}
@@ -1074,24 +1029,6 @@ export default function AdminPanel({
                               <EyeOff className="w-3.5 h-3.5" />
                             )}
                           </button>
-                          {/* AI Filter button — score photo quality via VLM */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleAiFilterClick(project);
-                            }}
-                            disabled={isSyncing || isTogglingHide || aiFilterId === project.id}
-                            className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-[#D4AF37] hover:bg-[#4C2A85]/20 transition-all cursor-pointer"
-                            title="Filter AI — sembunyikan foto berkualitas rendah (maks 200 foto)"
-                          >
-                            {aiFilterId === project.id ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Sparkles className="w-3.5 h-3.5" />
-                            )}
-                          </button>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1139,29 +1076,6 @@ export default function AdminPanel({
                         <div className="mt-2 text-[10px] bg-amber-500/5 border border-amber-500/10 text-amber-400/80 p-1.5 rounded text-center font-semibold">
                           ⚠ Belum disinkron. Klik &quot;Sinkron Drive&quot; agar
                           foto tampil!
-                        </div>
-                      )}
-
-                      {/* AI Filter progress */}
-                      {aiFilterId === project.id && (
-                        <div className="mt-2 p-2 rounded-lg bg-[#4C2A85]/30 border border-[#D4AF37]/30">
-                          <div className="flex items-center justify-between text-[9px] font-mono text-[#D4AF37] mb-1">
-                            <span>Filter AI berjalan...</span>
-                            <span>{aiFilterProgress.current}/{aiFilterProgress.total}</span>
-                          </div>
-                          <div className="h-1.5 bg-[#1F0F3D] rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-[#D4AF37] transition-all duration-300"
-                              style={{
-                                width: `${(aiFilterProgress.current / aiFilterProgress.total) * 100}%`,
-                              }}
-                            />
-                          </div>
-                          {aiFilterProgress.hidden > 0 && (
-                            <p className="text-[8px] text-slate-400 mt-1 font-mono">
-                              {aiFilterProgress.hidden} foto disembunyikan
-                            </p>
-                          )}
                         </div>
                       )}
                     </div>
@@ -1396,61 +1310,6 @@ export default function AdminPanel({
             onClick={(e) => e.stopPropagation()}
           >
             {renderGalleryForm()}
-          </div>
-        </div>
-      )}
-
-      {/* AI Filter Confirmation Modal */}
-      {aiFilterConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className="bg-[#120A21] border-2 border-[#D4AF37]/40 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl relative space-y-5 animate-fadeIn">
-            <div className="w-12 h-12 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37] text-[#D4AF37] flex items-center justify-center mx-auto mb-2">
-              <Sparkles className="w-6 h-6" />
-            </div>
-            <div className="text-center space-y-2">
-              <h3 className="text-lg font-serif font-bold text-white">
-                Filter AI
-              </h3>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                AI akan menilai kualitas setiap foto di galeri{" "}
-                <strong className="text-[#D4AF37]">&quot;{aiFilterConfirm.project.name}&quot;</strong>
-                {" "}pada skala 1-10. Foto dengan score &lt;5 akan disembunyikan dari pengunjung.
-              </p>
-              <div className="bg-[#1F0F3D]/50 rounded-xl p-3 space-y-1.5 mt-3">
-                <div className="flex justify-between text-[11px]">
-                  <span className="text-slate-400">Jumlah foto:</span>
-                  <span className="font-mono font-bold text-[#D4AF37]">{aiFilterConfirm.project.photoCount} foto</span>
-                </div>
-                <div className="flex justify-between text-[11px]">
-                  <span className="text-slate-400">Estimasi waktu:</span>
-                  <span className="font-mono font-bold text-[#D4AF37]">{aiFilterConfirm.estimatedTime}</span>
-                </div>
-                <div className="flex justify-between text-[11px]">
-                  <span className="text-slate-400">Worker requests:</span>
-                  <span className="font-mono font-bold text-slate-300">~{aiFilterConfirm.project.photoCount} requests</span>
-                </div>
-              </div>
-              <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
-                ⚠ Pastikan tab browser tetap terbuka selama proses berjalan.
-                Jangan tutup atau refresh halaman sampai selesai.
-              </p>
-            </div>
-            <div className="flex space-x-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setAiFilterConfirm(null)}
-                className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-200 text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleAiFilterConfirm}
-                className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#dfbb66] text-[#4C2A85] text-xs font-bold tracking-wider uppercase transition-all cursor-pointer shadow-lg active:scale-95"
-              >
-                Mulai Filter AI
-              </button>
-            </div>
           </div>
         </div>
       )}
