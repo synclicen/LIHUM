@@ -58,6 +58,7 @@ export default function AdminPanel({
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [password, setPassword] = useState("");
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState<
     "30s" | "1m" | "3m" | "5m" | "1h" | "6h"
   >("3m");
@@ -95,6 +96,7 @@ export default function AdminPanel({
     setVisibility("public");
     setPassword("");
     setAutoSyncEnabled(false);
+    setAutoFilterEnabled(false);
     setAutoSyncInterval("3m");
     setErrorMsg("");
   };
@@ -109,6 +111,7 @@ export default function AdminPanel({
     setVisibility(project.visibility || "public");
     setPassword(""); // never pre-fill — admin can leave empty to keep existing
     setAutoSyncEnabled(!!project.autoSyncEnabled);
+    setAutoFilterEnabled(!!project.autoFilterEnabled);
     setAutoSyncInterval(project.autoSyncInterval || "3m");
     setErrorMsg("");
   };
@@ -167,6 +170,7 @@ export default function AdminPanel({
           displayMode,
           visibility,
           password: visibility === "private" ? password : undefined,
+          autoFilterEnabled,
           autoSyncEnabled,
           autoSyncInterval,
         }),
@@ -248,6 +252,9 @@ export default function AdminPanel({
       const driveInfo = data.isSharedDrive && data.sharedDriveName
         ? ` dari Shared Drive "${data.sharedDriveName}"`
         : "";
+      const filterInfo = data.filteredStats
+        ? ` (filter: ${data.filteredStats.duplicates} duplikat dihapus, ${data.filteredStats.smallFiles} file kecil difilter dari ${data.filteredStats.total} total)`
+        : "";
 
       if (data.photoCount === 0) {
         // 0 photos — show diagnostic as ERROR (not success)
@@ -258,7 +265,7 @@ export default function AdminPanel({
       }
 
       setSuccessMsg(
-        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo}${driveInfo} dari Google Drive.`
+        `Sinkronisasi sukses! Berhasil memuat ${data.photoCount} foto${folderInfo}${driveInfo} dari Google Drive.${filterInfo}`
       );
       onRefresh();
 
@@ -592,6 +599,36 @@ export default function AdminPanel({
             </p>
           </div>
         )}
+
+        {/* Auto-Filter Section */}
+        <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+              Filter Foto Otomatis
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoFilterEnabled}
+                onChange={(e) => setAutoFilterEnabled(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
+              <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
+                {autoFilterEnabled ? "AKTIF" : "NONAKTIF"}
+              </span>
+            </label>
+          </div>
+          {autoFilterEnabled && (
+            <div className="space-y-1.5 animate-fadeIn">
+              <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+                Saat sync, sistem akan otomatis:
+                <br />• <strong className="text-[#D4AF37]/80">Hapus foto duplikat/burst</strong> — foto dengan nama mirip (IMG_0001, 0002, 0003) diambil dalam burst, hanya yang terbesar disimpan
+                <br />• <strong className="text-[#D4AF37]/80">Filter file &lt; 100KB</strong> — skip thumbnail/low quality
+              </p>
+            </div>
+          )}
+        </div>
 
         {/* Auto Sync Settings Section */}
         <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">

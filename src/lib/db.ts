@@ -117,6 +117,7 @@ export async function ensureSchema(): Promise<void> {
     await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
     await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
     await ensureColumn("Project", "isHidden", "INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("Project", "autoFilterEnabled", "INTEGER NOT NULL DEFAULT 0");
 
     // Migrations: add modifiedTime to Photo table for "Date Modified" sort.
     await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");

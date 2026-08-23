@@ -18,10 +18,8 @@ export interface Project {
   displayMode: "all" | "search";
   visibility: "public" | "private";
   isHidden?: boolean;
+  autoFilterEnabled?: boolean;
   photos: Photo[];
-  photoCount: number;
-  createdAt: string;
-  autoSyncEnabled?: boolean;
   autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
   lastSyncedAt?: string;
   /** Present only when the gallery is private and the visitor hasn't unlocked it. */
@@ -39,6 +37,7 @@ export interface ProjectSummary {
   displayMode: "all" | "search";
   visibility: "public" | "private";
   isHidden?: boolean;
+  autoFilterEnabled?: boolean;
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;

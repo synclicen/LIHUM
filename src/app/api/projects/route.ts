@@ -19,6 +19,7 @@ function summaryOut(p: ProjectRow) {
     displayMode: p.displayMode as "all" | "search",
     visibility: p.visibility as "public" | "private",
     isHidden: toBool(p.isHidden),
+    autoFilterEnabled: toBool(p.autoFilterEnabled),
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -53,14 +54,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = await req.json().catch(() => ({}));
-  const {
+    const {
     name,
     description,
     driveFolderUrl,
     displayMode,
     visibility,
     password,
+    autoFilterEnabled,
     autoSyncEnabled,
     autoSyncInterval,
   } = body;
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
     visibility: vis,
     password: hashedPassword,
     isHidden: false, // new galleries are visible by default
+    autoFilterEnabled: autoFilterEnabled === true,
     autoSyncEnabled: autoSyncEnabled === true,
     autoSyncInterval: autoSyncInterval || "3m",
     createdAt: new Date().toISOString().split("T")[0],

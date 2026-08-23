@@ -7,6 +7,92 @@ import {
   type NewPhotoInput,
 } from "@/lib/queries";
 
+// ── Auto-Filter: Dedup burst shots + filter small files ──
+//
+// When autoFilterEnabled is on, this function filters the raw photo list
+// BEFORE storing to DB. It removes:
+//  1. Files smaller than 100KB (likely thumbnails, screenshots, or low-quality)
+//  2. Duplicate/burst shots — photos with the same base name taken within
+//     seconds of each other (e.g. IMG_0001, IMG_0002, IMG_0003 in burst mode).
+//     Only the largest file from each burst group is kept.
+//
+// This runs entirely in memory during sync — 0 extra API calls, 0 Worker
+// requests, no rate limit risk.
+
+const MIN_FILE_SIZE_BYTES = 100 * 1024; // 100KB
+
+interface RawPhoto {
+  id: string;
+  name: string;
+  mimeType: string;
+  thumbnailLink: string;
+  webContentLink: string;
+  size: string;
+  createdTime: string;
+  modifiedTime: string;
+  parentName: string;
+}
+
+/**
+ * Extracts the "base name" for burst detection.
+ * "IMG_0001.JPG" → "IMG_000" (group by prefix)
+ * "Foto Rapat (1).jpg" → "Foto Rapat" (group by base)
+ * "DSC_0042.NEF" → "DSC_00" (group by prefix)
+ */
+function getBurstBaseName(fileName: string): string {
+  // Remove extension
+  const noExt = fileName.replace(/\.[^/.]+$/, "");
+  // Remove trailing (1), (2), _copy, -edit suffixes
+  const cleaned = noExt.replace(/\s*[\(\[]\d+[\)\]]\s*$/, "").replace(/[_-](copy|edit|edited|duplicate|dup)$/i, "");
+  // For numbered sequences (IMG_0001, DSC_0042), group by prefix (last 2 digits removed)
+  const numberedMatch = cleaned.match(/^(.+?)(\d{2,4})$/);
+  if (numberedMatch) {
+    return numberedMatch[1] + numberedMatch[2].substring(0, numberedMatch[2].length - 2);
+  }
+  return cleaned;
+}
+
+function filterPhotos(photos: RawPhoto[]): { kept: RawPhoto[]; stats: { duplicates: number; smallFiles: number; total: number } } {
+  const stats = { duplicates: 0, smallFiles: number, total: photos.length };
+
+  // Step 1: Filter out files smaller than MIN_FILE_SIZE_BYTES
+  const sizeFiltered = photos.filter((p) => {
+    const bytes = parseInt(p.size) || 0;
+    if (bytes > 0 && bytes < MIN_FILE_SIZE_BYTES) {
+      stats.smallFiles++;
+      return false;
+    }
+    return true;
+  });
+
+  // Step 2: Deduplicate burst shots
+  // Group by burst base name, keep only the largest file in each group
+  const groups = new Map<string, RawPhoto[]>();
+  for (const photo of sizeFiltered) {
+    const base = getBurstBaseName(photo.name);
+    if (!groups.has(base)) {
+      groups.set(base, []);
+    }
+    groups.get(base)!.push(photo);
+  }
+
+  const kept: RawPhoto[] = [];
+  for (const [, group] of groups) {
+    if (group.length === 1) {
+      // No duplicates — keep as is
+      kept.push(group[0]);
+    } else {
+      // Burst group — sort by size descending, keep only the largest
+      group.sort((a, b) => (parseInt(b.size) || 0) - (parseInt(a.size) || 0));
+      kept.push(group[0]);
+      stats.duplicates += group.length - 1;
+    }
+  }
+
+  console.log(`[Sync] Auto-filter: ${stats.total} total → ${kept.length} kept (${stats.duplicates} duplicates removed, ${stats.smallFiles} small files filtered)`);
+  return { kept, stats };
+}
+
 const DRIVE_FIELDS =
   "files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size, parents)";
 
@@ -362,7 +448,27 @@ export async function POST(
       });
     }
 
-    const mappedPhotos: NewPhotoInput[] = scanned.map(({ file, parentName }) => {
+    // ── Auto-Filter: if enabled, deduplicate burst shots + filter small files ──
+    let filteredStats: { duplicates: number; smallFiles: number; total: number } | undefined;
+    let photosToStore = scanned;
+    if (project.autoFilterEnabled) {
+      const rawPhotos: RawPhoto[] = scanned.map(({ file, parentName }) => ({
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        thumbnailLink: file.thumbnailLink || "",
+        webContentLink: file.webContentLink || "",
+        size: file.size || "0",
+        createdTime: file.createdTime || "",
+        modifiedTime: file.modifiedTime || "",
+        parentName,
+      }));
+      const filterResult = filterPhotos(rawPhotos);
+      photosToStore = filterResult.kept.map((p) => ({ file: p, parentName: p.parentName }));
+      filteredStats = filterResult.stats;
+    }
+
+    const mappedPhotos: NewPhotoInput[] = photosToStore.map(({ file, parentName }) => {
       const displayName = parentName ? `${parentName} — ${file.name}` : file.name;
 
       let sizeFormatted = "Unknown";
@@ -400,6 +506,7 @@ export async function POST(
       rootStrategy: scanResult.rootStrategy,
       isSharedDrive: scanResult.isSharedDrive,
       sharedDriveName: scanResult.sharedDriveName,
+      filteredStats: filteredStats || undefined,
       debug: scanResult.rootFolderError || undefined,
       photos: mappedPhotos,
       lastSyncedAt,
