@@ -54,7 +54,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-    const {
+  const body = await req.json().catch(() => ({}));
+  const {
     name,
     description,
     driveFolderUrl,
