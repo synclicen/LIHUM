@@ -517,15 +517,14 @@ export default function GalleryView({
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 flex-shrink-0 w-full bg-[#120A21]/40 border border-violet-900/20 px-3 py-2 rounded-xl">
             {/* Left: back button + title + share */}
             <div className="flex items-center gap-2 min-w-0 md:max-w-lg">
-              {isAdmin && (
-                <button
-                  onClick={onBack}
-                  className="group flex items-center justify-center w-7 h-7 shrink-0 text-slate-400 hover:text-[#D4AF37] rounded-lg hover:bg-white/5 transition-all cursor-pointer"
-                  title="Kembali ke Galeri Utama"
-                >
-                  <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
-                </button>
-              )}
+              {/* Back button — visible for ALL visitors (not just admin) */}
+              <button
+                onClick={onBack}
+                className="group flex items-center justify-center w-7 h-7 shrink-0 text-slate-400 hover:text-[#D4AF37] rounded-lg hover:bg-white/5 transition-all cursor-pointer"
+                title="Kembali ke Galeri Utama"
+              >
+                <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+              </button>
               <Sparkles className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
               <div className="min-w-0">
                 <h2 className="text-xs md:text-sm font-bold font-serif text-white tracking-wide leading-tight truncate">
