@@ -24,6 +24,8 @@ import {
   Download,
   QrCode,
   Camera,
+  Search,
+  ArrowUpDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -38,6 +40,32 @@ export default function App() {
   );
   const [loading, setLoading] = useState<boolean>(true);
   const [shareProject, setShareProject] = useState<ProjectSummary | null>(null);
+
+  // Gallery search + sort (client-side, 0 Worker requests)
+  const [gallerySearch, setGallerySearch] = useState("");
+  const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name-az" | "name-za">("newest");
+
+  const visibleGalleries = projects
+    .filter((p) => !p.isHidden)
+    .filter((p) => {
+      if (!gallerySearch.trim()) return true;
+      const q = gallerySearch.toLowerCase().trim();
+      return p.name.toLowerCase().includes(q) || (p.description || "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      switch (gallerySort) {
+        case "newest":
+          return b.createdAt.localeCompare(a.createdAt);
+        case "oldest":
+          return a.createdAt.localeCompare(b.createdAt);
+        case "name-az":
+          return a.name.localeCompare(b.name);
+        case "name-za":
+          return b.name.localeCompare(a.name);
+        default:
+          return 0;
+      }
+    });
 
   // Ref that always holds the latest admin email, so loadProjects (which is
   // captured once by the polling interval) always reads the current value
@@ -491,23 +519,49 @@ export default function App() {
             </AnimatePresence>
 
             {/* PUBLIC VISITOR GALLERIES AREA */}
-            <div className="space-y-6">
-              <div className="flex items-center justify-between pb-3 border-b border-[#D4AF37]/15">
-                <div className="space-y-1">
-                  <h2 className="text-xl md:text-2xl font-bold font-serif text-[#D4AF37] tracking-wide inline-flex items-center">
-                    Pilih Galeri Foto Kegiatan
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Silakan pilih destinasi di bawah ini untuk melihat foto-foto
-                    yang dibagikan.
-                  </p>
-                </div>
-                {!loading && projects.filter((p) => !p.isHidden).length > 0 && (
-                  <span className="text-xs bg-[#120A21] text-[#D4AF37] border border-[#D4AF37]/30 py-1.5 px-3 rounded-full font-mono font-bold shrink-0">
-                    {projects.filter((p) => !p.isHidden).length} Galeri Tersedia
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-[#D4AF37]/15">
+                <h2 className="text-lg md:text-xl font-bold font-serif text-[#D4AF37] tracking-wide">
+                  Pilih Galeri Foto Kegiatan
+                </h2>
+                {!loading && visibleGalleries.length > 0 && (
+                  <span className="text-xs bg-[#120A21] text-[#D4AF37] border border-[#D4AF37]/30 py-1 px-2.5 rounded-full font-mono font-bold shrink-0">
+                    {visibleGalleries.length} Galeri
                   </span>
                 )}
               </div>
+
+              {/* Search + Sort bar */}
+              {!loading && visibleGalleries.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1 max-w-xs">
+                    <input
+                      type="text"
+                      value={gallerySearch}
+                      onChange={(e) => setGallerySearch(e.target.value)}
+                      placeholder="Cari galeri..."
+                      className="w-full h-8 pl-8 pr-3 rounded-lg bg-white border-none shadow-md text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-[#D4AF37] placeholder-slate-400 transition-all font-sans"
+                    />
+                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
+                  <div className="relative shrink-0">
+                    <ArrowUpDown className="w-3 h-3 text-slate-500 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
+                    <select
+                      value={gallerySort}
+                      onChange={(e) => setGallerySort(e.target.value as any)}
+                      className="h-8 pl-6 pr-6 rounded-lg bg-white border-none shadow-md text-slate-700 text-[10px] focus:outline-none focus:ring-2 focus:ring-[#D4AF37] appearance-none cursor-pointer font-sans"
+                    >
+                      <option value="newest">Terbaru</option>
+                      <option value="oldest">Terlama</option>
+                      <option value="name-az">Nama (A-Z)</option>
+                      <option value="name-za">Nama (Z-A)</option>
+                    </select>
+                    <svg className="w-2.5 h-2.5 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              )}
 
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-16">
@@ -516,103 +570,78 @@ export default function App() {
                     Memuat galeri kegiatan...
                   </span>
                 </div>
-              ) : projects.length === 0 ? (
+              ) : visibleGalleries.length === 0 ? (
                 <div className="text-center py-20 bg-[#120A21] border border-dashed border-[#D4AF37]/30 rounded-2xl">
                   <ImageIcon className="w-12 h-12 text-[#D4AF37]/45 mx-auto mb-3" />
                   <p className="text-sm text-slate-400 font-medium">
-                    Belum ada galeri kegiatan publik yang tersedia saat ini.
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Harap beralih masuk sebagai Admin di menu kanan atas untuk
-                    mendaftarkan lokasi baru.
+                    {gallerySearch ? "Tidak ada galeri yang cocok dengan pencarian." : "Belum ada galeri kegiatan publik yang tersedia."}
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {projects.filter((p) => !p.isHidden).map((project) => {
-                    return (
-                      <div
-                        key={project.id}
-                        onClick={() => handleSelectProject(project.id)}
-                        className="group relative bg-white text-slate-800 border-2 border-slate-100 hover:border-[#D4AF37] rounded-2xl p-6 cursor-pointer transform hover:translate-y-[-4px] hover:shadow-2xl transition-all duration-300 flex flex-col justify-between"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-br from-[#4C2A85]/5 to-[#D4AF37]/5 opacity-0 group-hover:opacity-100 rounded-2xl transition-opacity duration-300 pointer-events-none" />
-
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4AF37] font-semibold bg-[#1F0F3D] px-2 py-0.5 rounded shrink-0">
-                              LIHUM: Lihat, Unduh Mandiri!
-                            </span>
-                            <div className="flex items-center space-x-1 shrink-0">
-                              <span
-                                className={`text-[9px] px-2.5 py-0.5 rounded-full inline-flex items-center space-x-1 border font-semibold ${
-                                  project.displayMode === "all"
-                                    ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                    : "bg-amber-50 text-amber-600 border-amber-100"
-                                }`}
-                              >
-                                {project.displayMode === "all" ? (
-                                  <>
-                                    <Globe className="w-2.5 h-2.5 mr-0.5 text-emerald-500" />
-                                    <span>Eksplorasi</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Lock className="w-2.5 h-2.5 mr-0.5 text-amber-500" />
-                                    <span>Cari Saja</span>
-                                  </>
-                                )}
-                              </span>
-                              {project.visibility === "private" && (
-                                <span className="text-[9px] px-2 py-0.5 rounded-full inline-flex items-center border font-semibold bg-red-50 text-red-600 border-red-100">
-                                  <Lock className="w-2.5 h-2.5 mr-0.5 text-red-500" />
-                                  <span>Privat</span>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <h3 className="text-lg font-serif font-bold text-slate-900 group-hover:text-[#4C2A85] transition-colors leading-snug">
-                            {project.name}
-                          </h3>
-
-                          <p className="text-xs text-slate-500 line-clamp-3 leading-relaxed">
-                            {project.description ||
-                              "Temukan kumpulan keindahan foto kegiatan di sini."}
-                          </p>
-                        </div>
-
-                        {/* Public Action foot */}
-                        <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
-                          <span className="font-mono bg-[#1F0F3D] text-[#D4AF37] py-1 px-3 rounded-full font-bold">
-                            {project.photoCount} Foto
+                /* Compact gallery grid — 4 columns on desktop, more cards per screen */
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {visibleGalleries.map((project) => (
+                    <div
+                      key={project.id}
+                      onClick={() => handleSelectProject(project.id)}
+                      className="group relative bg-white text-slate-800 border border-slate-200 hover:border-[#D4AF37] rounded-xl p-3 cursor-pointer transform hover:translate-y-[-2px] hover:shadow-lg transition-all duration-200 flex flex-col"
+                    >
+                      {/* Badges row */}
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[8px] font-mono uppercase tracking-wider text-[#D4AF37] font-bold bg-[#1F0F3D] px-1.5 py-0.5 rounded">
+                          LIHUM
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className={`text-[8px] px-1.5 py-0.5 rounded-full inline-flex items-center border font-semibold ${
+                            project.displayMode === "all"
+                              ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                              : "bg-amber-50 text-amber-600 border-amber-100"
+                          }`}>
+                            {project.displayMode === "all" ? <Globe className="w-2 h-2" /> : <Lock className="w-2 h-2" />}
                           </span>
-
-                          <div
-                            className="flex items-center space-x-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => setShareProject(project)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-[#4C2A85] hover:bg-slate-100 transition-colors flex items-center"
-                              title="Bagikan galeri ini (Tautan & QR Code)"
-                            >
-                              <Share2 className="w-4 h-4" />
-                            </button>
-
-                            <span
-                              onClick={() => handleSelectProject(project.id)}
-                              className="inline-flex items-center space-x-1 text-slate-700 font-bold hover:text-[#4C2A85] transition-colors cursor-pointer"
-                            >
-                              <span>Buka Galeri</span>
-                              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                          {project.visibility === "private" && (
+                            <span className="text-[8px] px-1.5 py-0.5 rounded-full inline-flex items-center border font-semibold bg-red-50 text-red-600 border-red-100">
+                              <Lock className="w-2 h-2" />
                             </span>
-                          </div>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
+
+                      {/* Title */}
+                      <h3 className="text-xs font-bold font-serif text-slate-900 group-hover:text-[#4C2A85] transition-colors leading-tight line-clamp-2 mb-1">
+                        {project.name}
+                      </h3>
+
+                      {/* Description */}
+                      <p className="text-[10px] text-slate-500 line-clamp-1 leading-relaxed mb-2 flex-grow">
+                        {project.description || "Kumpulan foto kegiatan."}
+                      </p>
+
+                      {/* Footer: photo count + open */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                        <span className="text-[9px] font-mono bg-[#1F0F3D] text-[#D4AF37] py-0.5 px-2 rounded-full font-bold">
+                          {project.photoCount} Foto
+                        </span>
+                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => setShareProject(project)}
+                            className="p-1 rounded text-slate-300 hover:text-[#4C2A85] hover:bg-slate-100 transition-colors"
+                            title="Bagikan galeri"
+                          >
+                            <Share2 className="w-3 h-3" />
+                          </button>
+                          <span
+                            onClick={() => handleSelectProject(project.id)}
+                            className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-700 hover:text-[#4C2A85] transition-colors cursor-pointer"
+                          >
+                            Buka
+                            <ArrowRight className="w-2.5 h-2.5 transition-transform group-hover:translate-x-0.5" />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
