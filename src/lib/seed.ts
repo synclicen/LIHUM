@@ -138,7 +138,7 @@ let seedPromise: Promise<void> | null = null;
  */
 export async function ensureSeed(): Promise<void> {
   if (seedPromise) return seedPromise;
-  seedPromise = (async () => {
+  const p = (async () => {
     await ensureSchema();
 
     if ((await countProjects()) === 0) {
@@ -155,10 +155,14 @@ export async function ensureSeed(): Promise<void> {
       await createAccounts(DEFAULT_ACCOUNTS);
     }
   })();
+  // Cache for the isolate's lifetime. Seed data only changes via code deploy
+  // (new isolate). On failure, clear so the next request retries.
+  seedPromise = p;
   try {
-    await seedPromise;
-  } finally {
+    await p;
+  } catch (err) {
     seedPromise = null;
+    throw err;
   }
 }
 

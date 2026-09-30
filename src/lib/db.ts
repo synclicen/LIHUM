@@ -62,13 +62,22 @@ async function ensureColumn(table: string, column: string, definition: string) {
 }
 
 /**
- * Idempotently creates the LIHUM schema (Project, Photo, Account) and runs
- * lightweight migrations for new columns. Safe to call on every request.
- * Concurrent calls are deduplicated.
+ * Idempotently creates the LIHUM schema (Project, Photo, Account,
+ * PendingUpload) and runs lightweight column migrations.
+ *
+ * PERFORMANCE: the schema check result is cached for the lifetime of the
+ * Worker isolate. Schema only changes via code deploys (which spin up a new
+ * isolate), so re-checking on every request is pure waste — especially on
+ * Turso where each of the ~13 statements is a 0.3-0.4s round trip (total
+ * 4-5s per request). Caching eliminates ALL of that overhead after the first
+ * request.
+ *
+ * On failure (DB down, etc.) the promise is NOT cached, so the next request
+ * retries — no permanent broken state.
  */
 export async function ensureSchema(): Promise<void> {
   if (schemaPromise) return schemaPromise;
-  schemaPromise = (async () => {
+  const p = (async () => {
     await db.batch([
       {
         sql: `CREATE TABLE IF NOT EXISTS Project (
@@ -146,9 +155,15 @@ export async function ensureSchema(): Promise<void> {
       sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)`,
     });
   })();
+  // Set immediately so concurrent calls during the first run dedup to the
+  // same promise. On success it stays cached for the isolate's lifetime
+  // (schema only changes via code deploy → new isolate). On failure we
+  // clear it so the next request retries from scratch.
+  schemaPromise = p;
   try {
-    await schemaPromise;
-  } finally {
+    await p;
+  } catch (err) {
     schemaPromise = null;
+    throw err;
   }
 }
