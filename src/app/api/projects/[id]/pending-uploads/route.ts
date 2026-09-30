@@ -37,7 +37,7 @@ export async function GET(
   return NextResponse.json({
     projectId: id,
     projectName: project.name,
-    serviceAccountConfigured: isServiceAccountConfigured(),
+    serviceAccountConfigured: await isServiceAccountConfigured(),
     count,
     uploads: uploads.map((u) => ({
       id: u.id,

@@ -20,10 +20,13 @@
  * folder for uploads / sync to succeed.
  */
 
+import { getSetting } from "@/lib/queries";
+
 export interface ServiceAccount {
   clientEmail: string;
   privateKey: string; // PEM string with BEGIN/END PRIVATE KEY markers
   privateKeyId?: string;
+  source?: "db" | "env"; // for diagnostics — where the SA was loaded from
 }
 
 interface CachedToken {
@@ -33,39 +36,101 @@ interface CachedToken {
 }
 
 let cachedToken: CachedToken | null = null;
+// In-memory cache of the parsed SA (parsed from DB/env). Cleared when the
+// SA is updated via the Settings tab so the next call re-reads from the DB.
+let cachedSa: ServiceAccount | null = null;
+let cachedSaLoaded = false;
 
-/** Reads & parses the service account credentials from env. Returns null if not configured. */
-export function getServiceAccount(): ServiceAccount | null {
-  // Preferred: full JSON key
-  const json = process.env.GOOGLE_SERVICE_ACCOUNT;
-  if (json && json.trim().startsWith("{")) {
-    try {
+/**
+ * Reads & parses the service account credentials.
+ *
+ * Resolution order:
+ *  1. Database Setting 'google_service_account' (set via Settings tab UI)
+ *  2. GOOGLE_SERVICE_ACCOUNT env var (full JSON, set as Worker secret)
+ *  3. GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY env vars
+ *
+ * The DB source lets admins configure the SA from the UI without CLI access.
+ * The env var sources remain as fallbacks for deployments that prefer CLI.
+ */
+export async function getServiceAccount(): Promise<ServiceAccount | null> {
+  if (cachedSaLoaded) return cachedSa;
+
+  // 1. Database
+  try {
+    const json = await getSetting("google_service_account");
+    if (json && json.trim().startsWith("{")) {
       const parsed = JSON.parse(json);
       if (parsed.client_email && parsed.private_key) {
-        return {
+        cachedSa = {
           clientEmail: parsed.client_email,
           privateKey: parsed.private_key,
           privateKeyId: parsed.private_key_id,
+          source: "db",
         };
+        cachedSaLoaded = true;
+        return cachedSa;
+      }
+    }
+  } catch {
+    /* fall through to env */
+  }
+
+  // 2. Env var (full JSON)
+  const jsonEnv = process.env.GOOGLE_SERVICE_ACCOUNT;
+  if (jsonEnv && jsonEnv.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(jsonEnv);
+      if (parsed.client_email && parsed.private_key) {
+        cachedSa = {
+          clientEmail: parsed.client_email,
+          privateKey: parsed.private_key,
+          privateKeyId: parsed.private_key_id,
+          source: "env",
+        };
+        cachedSaLoaded = true;
+        return cachedSa;
       }
     } catch {
-      /* fall through to individual env vars */
+      /* fall through */
     }
   }
 
-  // Fallback: individual env vars
+  // 3. Env var (individual fields)
   const clientEmail = process.env.GOOGLE_SA_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_SA_PRIVATE_KEY?.replace(/\\n/g, "\n");
   if (clientEmail && privateKey) {
-    return { clientEmail, privateKey };
+    cachedSa = { clientEmail, privateKey, source: "env" };
+    cachedSaLoaded = true;
+    return cachedSa;
   }
 
+  cachedSaLoaded = true;
   return null;
 }
 
-/** Whether a service account is configured. Used to show setup status in admin UI. */
-export function isServiceAccountConfigured(): boolean {
-  return getServiceAccount() !== null;
+/**
+ * Clears the in-memory SA cache + token cache. Call this after the SA is
+ * updated/deleted via the Settings tab so subsequent calls re-read from the DB.
+ */
+export function invalidateServiceAccountCache(): void {
+  cachedSa = null;
+  cachedSaLoaded = false;
+  cachedToken = null;
+}
+
+/** Whether a service account is configured. Synchronous version for quick UI status checks (may return false on first call before DB is read). */
+export function isServiceAccountConfiguredSync(): boolean {
+  return (
+    cachedSa !== null ||
+    !!process.env.GOOGLE_SERVICE_ACCOUNT ||
+    (!!process.env.GOOGLE_SA_CLIENT_EMAIL && !!process.env.GOOGLE_SA_PRIVATE_KEY)
+  );
+}
+
+/** Whether a service account is configured. Async (reads from DB on first call). */
+export async function isServiceAccountConfigured(): Promise<boolean> {
+  const sa = await getServiceAccount();
+  return sa !== null;
 }
 
 // ---------- Base64url helpers (no padding) ----------
@@ -161,10 +226,10 @@ export async function getServiceAccountAccessToken(scope: string): Promise<strin
     return cachedToken.accessToken;
   }
 
-  const sa = getServiceAccount();
+  const sa = await getServiceAccount();
   if (!sa) {
     throw new Error(
-      "Google Service Account is not configured. Set GOOGLE_SERVICE_ACCOUNT env var."
+      "Google Service Account is not configured. Set it via the Settings tab or the GOOGLE_SERVICE_ACCOUNT env var."
     );
   }
 

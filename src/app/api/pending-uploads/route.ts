@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
 
   return NextResponse.json({
-    serviceAccountConfigured: isServiceAccountConfigured(),
+    serviceAccountConfigured: await isServiceAccountConfigured(),
     total,
     counts: obj,
   });

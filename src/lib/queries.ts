@@ -577,6 +577,36 @@ export async function deletePendingUploadsForProject(projectId: string): Promise
   return count;
 }
 
+// ---------- Settings (app-wide key-value store) ----------
+export interface SettingRow {
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+export async function getSetting(key: string): Promise<string | null> {
+  const r = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [key],
+  });
+  if (r.rows.length === 0) return null;
+  return String((r.rows[0] as Record<string, unknown>).value);
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+    args: [key, value, new Date().toISOString()],
+  });
+}
+
+export async function deleteSetting(key: string): Promise<boolean> {
+  await db.execute({ sql: "DELETE FROM Setting WHERE key = ?", args: [key] });
+  const r = await db.execute({ sql: "SELECT key FROM Setting WHERE key = ?", args: [key] });
+  return r.rows.length === 0;
+}
+
 // ---------- Accounts ----------
 export async function countAccounts(): Promise<number> {
   const r = await db.execute("SELECT COUNT(*) AS c FROM Account");

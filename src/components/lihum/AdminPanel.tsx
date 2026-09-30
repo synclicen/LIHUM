@@ -30,6 +30,14 @@ import {
   KeyRound,
   CloudUpload,
   Mail,
+  Settings,
+  ShieldCheck,
+  AlertTriangle,
+  Database,
+  Server,
+  CheckCircle2,
+  XCircle,
+  Copy,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -52,7 +60,9 @@ export default function AdminPanel({
   userRole,
 }: AdminPanelProps) {
   // Tab control state
-  const [activeTab, setActiveTab] = useState<"projects" | "accounts">("projects");
+  const [activeTab, setActiveTab] = useState<
+    "projects" | "accounts" | "settings"
+  >("projects");
 
   // Form states
   const [isEditing, setIsEditing] = useState(false);
@@ -107,6 +117,39 @@ export default function AdminPanel({
     null
   );
   const [clearingPending, setClearingPending] = useState(false);
+
+  // ── Settings tab state (admin only) ──
+  const [settingsData, setSettingsData] = useState<{
+    serviceAccount: {
+      configured: boolean;
+      clientEmail: string | null;
+      source: string | null;
+    };
+    stats: {
+      projects: number;
+      photos: number;
+      accounts: number;
+      pendingUploads: number;
+      pendingStorageBytes: number;
+    };
+    app: {
+      appUrl: string;
+      databaseUrl: string;
+      nodeEnv: string;
+    };
+  } | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [saJsonInput, setSaJsonInput] = useState("");
+  const [savingSa, setSavingSa] = useState(false);
+  const [deletingSa, setDeletingSa] = useState(false);
+  const [testingSa, setTestingSa] = useState(false);
+  const [saTestResult, setSaTestResult] = useState<{
+    success: boolean;
+    message: string;
+    driveUser?: string;
+  } | null>(null);
+  const [showSaInstructions, setShowSaInstructions] = useState(false);
+  const [clearingAllPending, setClearingAllPending] = useState(false);
 
   const resetForm = () => {
     setIsEditing(false);
@@ -163,6 +206,9 @@ export default function AdminPanel({
   useEffect(() => {
     if (activeTab === "accounts" && userRole === "admin") {
       loadAccounts();
+    }
+    if (activeTab === "settings" && userRole === "admin") {
+      loadSettings();
     }
   }, [activeTab, userRole]);
 
@@ -257,6 +303,146 @@ export default function AdminPanel({
       setErrorMsg(err.message || "Gagal menghapus semua upload.");
     } finally {
       setClearingPending(false);
+    }
+  };
+
+  // ── Settings tab handlers (admin only) ──
+  const loadSettings = async () => {
+    setLoadingSettings(true);
+    try {
+      const res = await fetch("/api/settings", {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal memuat pengaturan.");
+      const data = await res.json();
+      setSettingsData(data);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal memuat pengaturan.");
+    } finally {
+      setLoadingSettings(false);
+    }
+  };
+
+  const handleSaveSa = async () => {
+    if (!saJsonInput.trim()) {
+      setErrorMsg("Tempel JSON key terlebih dahulu.");
+      return;
+    }
+    setSavingSa(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    setSaTestResult(null);
+    try {
+      const res = await fetch("/api/settings/service-account", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({ serviceAccount: saJsonInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Gagal menyimpan Service Account.");
+      }
+      setSuccessMsg(data.message || "Service Account berhasil disimpan.");
+      setSaJsonInput("");
+      loadSettings();
+      loadPendingCounts();
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menyimpan Service Account.");
+    } finally {
+      setSavingSa(false);
+    }
+  };
+
+  const handleDeleteSa = async () => {
+    setDeletingSa(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    setSaTestResult(null);
+    try {
+      const res = await fetch("/api/settings/service-account", {
+        method: "DELETE",
+        headers: { "x-user-email": userEmail },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Gagal menghapus Service Account.");
+      }
+      setSuccessMsg(data.message || "Service Account dihapus.");
+      loadSettings();
+      loadPendingCounts();
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menghapus Service Account.");
+    } finally {
+      setDeletingSa(false);
+    }
+  };
+
+  const handleTestSa = async () => {
+    setTestingSa(true);
+    setSaTestResult(null);
+    setErrorMsg("");
+    try {
+      const res = await fetch("/api/settings/service-account/test", {
+        method: "POST",
+        headers: { "x-user-email": userEmail },
+      });
+      const data = await res.json();
+      setSaTestResult({
+        success: !!data.success,
+        message: data.message || data.error || "",
+        driveUser: data.driveUser?.emailAddress,
+      });
+    } catch (err: any) {
+      setSaTestResult({
+        success: false,
+        message: err.message || "Gagal terhubung ke server.",
+      });
+    } finally {
+      setTestingSa(false);
+    }
+  };
+
+  const handleClearAllPendingGlobal = async () => {
+    setClearingAllPending(true);
+    try {
+      // Clear pending uploads for ALL projects by calling the per-project
+      // delete endpoint for each project that has pending count > 0.
+      const projectsWithPending = Object.entries(pendingCounts).filter(
+        ([, count]) => count > 0
+      );
+      await Promise.all(
+        projectsWithPending.map(([pid]) =>
+          fetch(`/api/projects/${pid}/pending-uploads`, {
+            method: "DELETE",
+            headers: { "x-user-email": userEmail },
+          })
+        )
+      );
+      setSuccessMsg(
+        `Berhasil menghapus ${pendingTotal} upload pending dari ${projectsWithPending.length} galeri.`
+      );
+      loadSettings();
+      loadPendingCounts();
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menghapus upload pending.");
+    } finally {
+      setClearingAllPending(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setSuccessMsg("Tersalin ke clipboard.");
+      setTimeout(() => setSuccessMsg(""), 2000);
+    } catch {
+      /* ignore */
     }
   };
 
@@ -992,6 +1178,23 @@ export default function AdminPanel({
               Manajemen Akun ({accounts.length ? accounts.length : "..."})
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("settings");
+              setErrorMsg("");
+              setSuccessMsg("");
+              setSaTestResult(null);
+            }}
+            className={`pb-2 px-1 text-xs uppercase tracking-wider font-extrabold flex items-center space-x-2 border-b-2 transition-all cursor-pointer ${
+              activeTab === "settings"
+                ? "text-[#D4AF37] border-[#D4AF37]"
+                : "text-slate-400 border-transparent hover:text-white"
+            }`}
+          >
+            <Settings className="w-4 h-4 text-amber-400" />
+            <span>Pengaturan</span>
+          </button>
         </div>
       )}
 
@@ -1292,7 +1495,7 @@ export default function AdminPanel({
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === "accounts" ? (
         /* Accounts Management Tab view */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Add Account Form Section */}
@@ -1503,6 +1706,310 @@ export default function AdminPanel({
               </div>
             )}
           </div>
+        </div>
+      ) : (
+        /* Settings Tab view — admin only */
+        <div className="space-y-6">
+          {loadingSettings ? (
+            <div className="flex items-center justify-center py-20">
+              <RefreshCw className="w-6 h-6 text-[#D4AF37] animate-spin" />
+            </div>
+          ) : settingsData ? (
+            <>
+              {/* ── Section 1: Google Service Account ── */}
+              <div className="bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-6 shadow-2xl">
+                <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-violet-900/30">
+                  <KeyRound className="w-5 h-5 text-[#D4AF37]" />
+                  <h2 className="text-md font-serif font-bold text-white">
+                    Google Service Account
+                  </h2>
+                  {settingsData.serviceAccount.configured ? (
+                    <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      AKTIF
+                    </span>
+                  ) : (
+                    <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      BELUM DIKONFIGURASI
+                    </span>
+                  )}
+                </div>
+
+                {/* Current SA info */}
+                {settingsData.serviceAccount.configured && (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex items-center justify-between bg-[#1F0F3D]/40 rounded-lg px-3 py-2">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider">
+                        Email Service Account
+                      </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[11px] text-[#D4AF37] font-mono truncate max-w-[200px]">
+                          {settingsData.serviceAccount.clientEmail}
+                        </span>
+                        <button
+                          onClick={() => copyToClipboard(settingsData.serviceAccount.clientEmail || "")}
+                          className="text-slate-500 hover:text-[#D4AF37] transition-colors shrink-0"
+                          title="Salin email"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                      <span>Sumber: <strong className="text-slate-300">{settingsData.serviceAccount.source === "db" ? "Database (via UI)" : "Env Var (via CLI)"}</strong></span>
+                    </div>
+                    {/* Test button + result */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        onClick={handleTestSa}
+                        disabled={testingSa}
+                        className="px-3 py-1.5 rounded-lg bg-[#4C2A85] border border-[#D4AF37]/35 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-[#5a329d] transition-all disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {testingSa ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3 h-3" />
+                        )}
+                        Tes Koneksi
+                      </button>
+                    </div>
+                    {saTestResult && (
+                      <div className={`flex items-start gap-2 p-2.5 rounded-lg text-[10px] ${
+                        saTestResult.success
+                          ? "bg-emerald-500/10 border border-emerald-500/25 text-emerald-300"
+                          : "bg-red-500/10 border border-red-500/25 text-red-300"
+                      }`}>
+                        {saTestResult.success ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        ) : (
+                          <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        )}
+                        <span className="leading-relaxed">{saTestResult.message}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* JSON key input */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    {settingsData.serviceAccount.configured
+                      ? "Ganti JSON Key (opsional)"
+                      : "Tempel JSON Key Service Account"}
+                  </label>
+                  <textarea
+                    value={saJsonInput}
+                    onChange={(e) => setSaJsonInput(e.target.value)}
+                    placeholder={"Tempel seluruh isi file JSON key di sini..."}
+                    className="w-full h-32 bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2.5 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] placeholder-slate-600 resize-none custom-scrollbar"
+                    spellCheck={false}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSaveSa}
+                      disabled={savingSa || !saJsonInput.trim()}
+                      className="px-4 py-1.5 rounded-lg bg-[#D4AF37] text-[#4C2A85] text-[10px] font-extrabold uppercase tracking-wider hover:bg-[#dfbb66] transition-all disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {savingSa ? (
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-3 h-3" />
+                      )}
+                      Simpan
+                    </button>
+                    {settingsData.serviceAccount.source === "db" && (
+                      <button
+                        onClick={handleDeleteSa}
+                        disabled={deletingSa}
+                        className="px-4 py-1.5 rounded-lg border border-red-500/30 text-red-400 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/10 transition-all disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {deletingSa ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                        Hapus dari DB
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowSaInstructions(!showSaInstructions)}
+                      className="ml-auto text-[10px] text-slate-400 hover:text-[#D4AF37] transition-colors"
+                    >
+                      {showSaInstructions ? "Sembunyikan" : "Cara setup?"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Setup instructions (collapsible) */}
+                {showSaInstructions && (
+                  <div className="mt-4 space-y-3 bg-[#1F0F3D]/30 border border-violet-950/50 rounded-xl p-4 animate-fadeIn">
+                    <h4 className="text-[11px] font-bold text-[#D4AF37] uppercase tracking-wider">
+                      Cara Membuat Service Account
+                    </h4>
+                    <ol className="space-y-2 text-[10px] text-slate-400 leading-relaxed list-decimal list-inside">
+                      <li>
+                        Buka{" "}
+                        <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noreferrer" className="text-[#D4AF37] hover:underline inline-flex items-center gap-0.5">
+                          Google Cloud Console → Service Accounts
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </li>
+                      <li>Pilih atau buat project Google Cloud baru.</li>
+                      <li>Klik <strong className="text-slate-300">Create Service Account</strong>, beri nama (mis: <code className="text-[#D4AF37]">lihum-uploader</code>).</li>
+                      <li>
+                        Setelah dibuat, buka tab <strong className="text-slate-300">Keys</strong> → <strong className="text-slate-300">Add Key</strong> → <strong className="text-slate-300">JSON</strong>. File JSON akan terdownload otomatis.
+                      </li>
+                      <li>
+                        Aktifkan <strong className="text-slate-300">Google Drive API</strong>:{" "}
+                        <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noreferrer" className="text-[#D4AF37] hover:underline inline-flex items-center gap-0.5">
+                          Library → Google Drive API → Enable
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </li>
+                      <li>
+                        <strong className="text-amber-400">Penting:</strong> Buka folder Google Drive galeri Anda → klik <strong className="text-slate-300">Share</strong> → tambahkan email Service Account (mis: <code className="text-[#D4AF37]">lihum-uploader@project.iam.gserviceaccount.com</code>) sebagai <strong className="text-slate-300">Editor</strong>.
+                      </li>
+                      <li>Buka file JSON yang terdownload, salin seluruh isinya, tempel ke textarea di atas, klik <strong className="text-[#D4AF37]">Simpan</strong>.</li>
+                      <li>Klik <strong className="text-[#D4AF37]">Tes Koneksi</strong> untuk memastikan SA berfungsi.</li>
+                    </ol>
+                    <p className="text-[9px] text-slate-500 leading-relaxed border-t border-violet-950/50 pt-2">
+                      Setelah SA aktif, foto yang diupload pengunjung via QR Upload akan langsung masuk ke folder Google Drive dan galeri tersinkronisasi otomatis. Tanpa SA, foto pengunjung disimpan sementara untuk ditinjau admin (lihat ikon Inbox di tab Galeri).
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Section 2: Database & Storage ── */}
+              <div className="bg-[#120A21] border border-violet-900/40 rounded-2xl p-6 shadow-2xl">
+                <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-violet-900/30">
+                  <Database className="w-5 h-5 text-[#D4AF37]" />
+                  <h2 className="text-md font-serif font-bold text-white">
+                    Database & Penyimpanan
+                  </h2>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-[#1F0F3D]/40 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-[#D4AF37] font-mono">
+                      {settingsData.stats.projects}
+                    </div>
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-1">Galeri</div>
+                  </div>
+                  <div className="bg-[#1F0F3D]/40 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-[#D4AF37] font-mono">
+                      {settingsData.stats.photos}
+                    </div>
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-1">Foto</div>
+                  </div>
+                  <div className="bg-[#1F0F3D]/40 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-[#D4AF37] font-mono">
+                      {settingsData.stats.accounts}
+                    </div>
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-1">Akun</div>
+                  </div>
+                  <div className="bg-[#1F0F3D]/40 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-amber-400 font-mono">
+                      {settingsData.stats.pendingUploads}
+                    </div>
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-1">Pending</div>
+                  </div>
+                </div>
+                <div className="space-y-2 text-[10px]">
+                  <div className="flex items-center justify-between bg-[#1F0F3D]/30 rounded-lg px-3 py-2">
+                    <span className="text-slate-500">Ukuran Upload Pending</span>
+                    <span className="text-slate-300 font-mono">
+                      {(settingsData.stats.pendingStorageBytes / (1024 * 1024)).toFixed(2)} MB
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between bg-[#1F0F3D]/30 rounded-lg px-3 py-2">
+                    <span className="text-slate-500">Turso Database URL</span>
+                    <span className="text-slate-400 font-mono text-[9px] truncate max-w-[250px]" title={settingsData.app.databaseUrl}>
+                      {settingsData.app.databaseUrl}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 3: App Config ── */}
+              <div className="bg-[#120A21] border border-violet-900/40 rounded-2xl p-6 shadow-2xl">
+                <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-violet-900/30">
+                  <Server className="w-5 h-5 text-[#D4AF37]" />
+                  <h2 className="text-md font-serif font-bold text-white">
+                    Konfigurasi Aplikasi
+                  </h2>
+                </div>
+                <div className="space-y-2 text-[10px]">
+                  <div className="flex items-center justify-between bg-[#1F0F3D]/30 rounded-lg px-3 py-2">
+                    <span className="text-slate-500">Production URL</span>
+                    <a
+                      href={settingsData.app.appUrl || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[#D4AF37] hover:underline font-mono inline-flex items-center gap-1"
+                    >
+                      {settingsData.app.appUrl || "—"}
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="flex items-center justify-between bg-[#1F0F3D]/30 rounded-lg px-3 py-2">
+                    <span className="text-slate-500">Environment</span>
+                    <span className="text-slate-300 font-mono uppercase">{settingsData.app.nodeEnv}</span>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-start gap-2 text-[9.5px] text-slate-500 bg-[#1F0F3D]/30 rounded-md px-2.5 py-2">
+                  <Mail className="w-3 h-3 shrink-0 mt-0.5" />
+                  <span>
+                    Pastikan domain produksi ditambahkan ke Firebase Console →
+                    Authentication → Settings → Authorized domains agar login
+                    Google berfungsi.
+                  </span>
+                </div>
+              </div>
+
+              {/* ── Section 4: Danger Zone ── */}
+              <div className="bg-[#120A21] border border-red-500/20 rounded-2xl p-6 shadow-2xl">
+                <div className="flex items-center space-x-2.5 mb-5 pb-3 border-b border-red-500/15">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                  <h2 className="text-md font-serif font-bold text-white">
+                    Zone Berbahaya
+                  </h2>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-slate-300 font-bold">
+                      Hapus Semua Upload Pending
+                    </p>
+                    <p className="text-[9.5px] text-slate-500 leading-relaxed mt-0.5">
+                      Menghapus {settingsData.stats.pendingUploads} foto pending dari semua galeri.
+                      Tindakan ini tidak dapat dibatalkan.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleClearAllPendingGlobal}
+                    disabled={clearingAllPending || settingsData.stats.pendingUploads === 0}
+                    className="px-4 py-2 rounded-lg border border-red-500/30 text-red-400 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/10 transition-all disabled:opacity-50 shrink-0 flex items-center gap-1.5"
+                  >
+                    {clearingAllPending ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                    Hapus Semua
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-20">
+              <p className="text-xs text-slate-400">Gagal memuat pengaturan.</p>
+              <button
+                onClick={loadSettings}
+                className="mt-3 px-4 py-2 bg-[#4C2A85] text-white text-xs rounded-xl hover:bg-[#5a329d] transition-all"
+              >
+                Coba Lagi
+              </button>
+            </div>
+          )}
         </div>
       )}
 

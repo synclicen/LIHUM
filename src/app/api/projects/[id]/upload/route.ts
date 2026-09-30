@@ -153,7 +153,7 @@ export async function POST(
   }
   incrementRateLimit(clientIp, photos.length);
 
-  const sa = getServiceAccount();
+  const sa = await getServiceAccount();
   const folderId = project.driveFolderId;
   const galleryName = project.name;
 
@@ -316,7 +316,7 @@ export async function GET(
     id: project.id,
     name: project.name,
     allowVisitorUpload: !!project.allowVisitorUpload,
-    mode: isServiceAccountConfigured() ? "service-account" : "pending",
+    mode: (await isServiceAccountConfigured()) ? "service-account" : "pending",
     // Bump lastSyncedAt into the response so the upload page can show
     // "last synced" status without a separate call.
     lastSyncedAt: project.lastSyncedAt || "",

@@ -46,7 +46,7 @@ export async function POST(
   const { id } = await params;
   const authHeader = req.headers.get("authorization");
   const hasBearer = !!authHeader && authHeader.startsWith("Bearer ");
-  const sa = getServiceAccount();
+  const sa = await getServiceAccount();
 
   let token: string;
   let tokenSource: string;

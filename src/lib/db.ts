@@ -154,6 +154,20 @@ export async function ensureSchema(): Promise<void> {
     await db.execute({
       sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)`,
     });
+
+    // Setting: app-wide key-value store for admin-configured settings.
+    // Used for the Google Service Account JSON key (so admins can configure it
+    // from the Settings tab without CLI access) and other future settings.
+    // NOTE: sensitive values (like the SA private key) are stored here. They
+    // are NEVER returned to the client in full — only non-sensitive metadata
+    // (e.g. client_email, configured status) is exposed via the API.
+    await db.execute({
+      sql: `CREATE TABLE IF NOT EXISTS Setting (
+  key       TEXT PRIMARY KEY,
+  value     TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+)`,
+    });
   })();
   // Set immediately so concurrent calls during the first run dedup to the
   // same promise. On success it stays cached for the isolate's lifetime
