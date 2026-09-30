@@ -465,6 +465,118 @@ export async function addProjectPhotos(
   }
 }
 
+// ---------- Pending Uploads (visitor uploads awaiting admin review) ----------
+export interface PendingUploadRow {
+  id: string;
+  projectId: string;
+  fileName: string;
+  mimeType: string;
+  base64Data: string;
+  size: number;
+  uploaderIp: string;
+  createdAt: string;
+}
+
+export interface NewPendingUploadInput {
+  id: string;
+  projectId: string;
+  fileName: string;
+  mimeType: string;
+  base64Data: string;
+  size: number;
+  uploaderIp: string;
+  createdAt: string;
+}
+
+const asPendingUpload = (r: Record<string, unknown>): PendingUploadRow => ({
+  id: String(r.id),
+  projectId: String(r.projectId),
+  fileName: String(r.fileName),
+  mimeType: String(r.mimeType ?? "image/jpeg"),
+  base64Data: String(r.base64Data ?? ""),
+  size: Number(r.size ?? 0),
+  uploaderIp: String(r.uploaderIp ?? ""),
+  createdAt: String(r.createdAt ?? ""),
+});
+
+export async function addPendingUpload(input: NewPendingUploadInput): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO PendingUpload (id, projectId, fileName, mimeType, base64Data, size, uploaderIp, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      input.id,
+      input.projectId,
+      input.fileName,
+      input.mimeType,
+      input.base64Data,
+      input.size,
+      input.uploaderIp,
+      input.createdAt,
+    ],
+  });
+}
+
+/** List pending uploads for a gallery (without the heavy base64 payload). */
+export async function getPendingUploads(projectId: string): Promise<Omit<PendingUploadRow, "base64Data">[]> {
+  const r = await db.execute({
+    sql: "SELECT id, projectId, fileName, mimeType, size, uploaderIp, createdAt FROM PendingUpload WHERE projectId = ? ORDER BY createdAt ASC",
+    args: [projectId],
+  });
+  return r.rows.map((row) => {
+    const full = asPendingUpload(row as Record<string, unknown>);
+    const { base64Data, ...rest } = full;
+    return rest;
+  });
+}
+
+export async function countPendingUploads(projectId: string): Promise<number> {
+  const r = await db.execute({
+    sql: "SELECT COUNT(*) AS c FROM PendingUpload WHERE projectId = ?",
+    args: [projectId],
+  });
+  return Number((r.rows[0] as Record<string, unknown>)?.c ?? 0);
+}
+
+/** Counts pending uploads for ALL galleries — returns a map of projectId → count. */
+export async function countAllPendingUploads(): Promise<Map<string, number>> {
+  const r = await db.execute(
+    "SELECT projectId, COUNT(*) AS c FROM PendingUpload GROUP BY projectId"
+  );
+  const map = new Map<string, number>();
+  for (const row of r.rows) {
+    const rec = row as Record<string, unknown>;
+    map.set(String(rec.projectId), Number(rec.c ?? 0));
+  }
+  return map;
+}
+
+export async function findPendingUpload(id: string): Promise<PendingUploadRow | null> {
+  const r = await db.execute({
+    sql: "SELECT * FROM PendingUpload WHERE id = ? LIMIT 1",
+    args: [id],
+  });
+  if (r.rows.length === 0) return null;
+  return asPendingUpload(r.rows[0] as Record<string, unknown>);
+}
+
+export async function deletePendingUpload(id: string): Promise<boolean> {
+  await db.execute({ sql: "DELETE FROM PendingUpload WHERE id = ?", args: [id] });
+  const r = await db.execute({ sql: "SELECT id FROM PendingUpload WHERE id = ?", args: [id] });
+  return r.rows.length === 0;
+}
+
+export async function deletePendingUploadsForProject(projectId: string): Promise<number> {
+  const r = await db.execute({
+    sql: "SELECT COUNT(*) AS c FROM PendingUpload WHERE projectId = ?",
+    args: [projectId],
+  });
+  const count = Number((r.rows[0] as Record<string, unknown>)?.c ?? 0);
+  if (count > 0) {
+    await db.execute({ sql: "DELETE FROM PendingUpload WHERE projectId = ?", args: [projectId] });
+  }
+  return count;
+}
+
 // ---------- Accounts ----------
 export async function countAccounts(): Promise<number> {
   const r = await db.execute("SELECT COUNT(*) AS c FROM Account");

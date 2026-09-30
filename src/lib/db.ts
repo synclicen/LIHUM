@@ -125,6 +125,26 @@ export async function ensureSchema(): Promise<void> {
     await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
     // aiHidden: 0 = visible, 1 = hidden by AI filter (low quality)
     await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
+
+    // PendingUpload: visitor-uploaded photos awaiting admin review / Drive sync.
+    // Used as a fallback when no Google Service Account is configured, so the
+    // Upload Mandiri feature works immediately without any Google Cloud setup.
+    await db.execute({
+      sql: `CREATE TABLE IF NOT EXISTS PendingUpload (
+  id          TEXT PRIMARY KEY,
+  projectId   TEXT NOT NULL,
+  fileName    TEXT NOT NULL,
+  mimeType    TEXT NOT NULL DEFAULT 'image/jpeg',
+  base64Data  TEXT NOT NULL,
+  size        INTEGER NOT NULL DEFAULT 0,
+  uploaderIp  TEXT NOT NULL DEFAULT '',
+  createdAt   TEXT NOT NULL,
+  FOREIGN KEY (projectId) REFERENCES Project(id) ON DELETE CASCADE
+)`,
+    });
+    await db.execute({
+      sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)`,
+    });
   })();
   try {
     await schemaPromise;

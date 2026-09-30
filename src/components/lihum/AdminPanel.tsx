@@ -25,6 +25,11 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  Inbox,
+  Download,
+  KeyRound,
+  CloudUpload,
+  Mail,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -88,6 +93,21 @@ export default function AdminPanel({
     email: string;
   } | null>(null);
 
+  // ── Pending visitor uploads (admin review) state ──
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [saConfigured, setSaConfigured] = useState<boolean | null>(null);
+  const [pendingViewer, setPendingViewer] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [pendingList, setPendingList] = useState<any[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [deletingPendingId, setDeletingPendingId] = useState<string | null>(
+    null
+  );
+  const [clearingPending, setClearingPending] = useState(false);
+
   const resetForm = () => {
     setIsEditing(false);
     setEditingId(null);
@@ -145,6 +165,95 @@ export default function AdminPanel({
       loadAccounts();
     }
   }, [activeTab, userRole]);
+
+  // Load pending upload counts + SA status whenever projects refresh.
+  const loadPendingCounts = async () => {
+    try {
+      const res = await fetch("/api/pending-uploads", {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setPendingCounts(data.counts || {});
+      setPendingTotal(data.total || 0);
+      setSaConfigured(!!data.serviceAccountConfigured);
+    } catch {
+      /* non-critical */
+    }
+  };
+
+  useEffect(() => {
+    loadPendingCounts();
+  }, [projects.length, onRefresh]);
+
+  const openPendingViewer = async (projectId: string, projectName: string) => {
+    setPendingViewer({ id: projectId, name: projectName });
+    setPendingList([]);
+    setLoadingPending(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/pending-uploads`, {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal memuat upload pending.");
+      const data = await res.json();
+      setPendingList(data.uploads || []);
+      setSaConfigured(!!data.serviceAccountConfigured);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal memuat upload pending.");
+      setPendingViewer(null);
+    } finally {
+      setLoadingPending(false);
+    }
+  };
+
+  const downloadPendingUpload = (uploadId: string) => {
+    // Direct browser navigation triggers a file download (Content-Disposition: attachment).
+    // Auth via cookie isn't available for this admin route; the admin email is
+    // passed as a query param fallback so the fetch is associated with the admin.
+    const link = document.createElement("a");
+    link.href = `/api/pending-uploads/${uploadId}?admin=${encodeURIComponent(userEmail)}`;
+    link.download = "";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const deletePendingUpload = async (uploadId: string) => {
+    setDeletingPendingId(uploadId);
+    try {
+      const res = await fetch(`/api/pending-uploads/${uploadId}`, {
+        method: "DELETE",
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal menghapus.");
+      setPendingList((prev) => prev.filter((u) => u.id !== uploadId));
+      loadPendingCounts();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menghapus upload.");
+    } finally {
+      setDeletingPendingId(null);
+    }
+  };
+
+  const clearAllPending = async () => {
+    if (!pendingViewer) return;
+    setClearingPending(true);
+    try {
+      const res = await fetch(`/api/projects/${pendingViewer.id}/pending-uploads`, {
+        method: "DELETE",
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal menghapus semua.");
+      setPendingList([]);
+      loadPendingCounts();
+      setSuccessMsg("Semua upload pending dihapus.");
+      setTimeout(() => setSuccessMsg(""), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menghapus semua upload.");
+    } finally {
+      setClearingPending(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -692,6 +801,27 @@ export default function AdminPanel({
                 Maksimal 5 foto per sesi. Foto masuk ke folder Google Drive
                 dan muncul setelah admin sinkron.
               </p>
+              {saConfigured === true && (
+                <div className="flex items-center gap-1.5 text-[9.5px] text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded-md px-2 py-1">
+                  <CloudUpload className="w-3 h-3 shrink-0" />
+                  <span>
+                    Service Account aktif — foto langsung masuk ke Drive &amp;
+                    galeri tersinkron otomatis.
+                  </span>
+                </div>
+              )}
+              {saConfigured === false && (
+                <div className="flex items-start gap-1.5 text-[9.5px] text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-md px-2 py-1.5">
+                  <KeyRound className="w-3 h-3 shrink-0 mt-0.5" />
+                  <span>
+                    Mode fallback aktif: foto pengunjung disimpan sementara
+                    untuk ditinjau admin (lihat ikon Inbox). Untuk upload
+                    otomatis ke Drive, setel Google Service Account sebagai
+                    Worker secret <code className="text-[#D4AF37]">GOOGLE_SERVICE_ACCOUNT</code> &amp;
+                    tambahkan email SA sebagai Editor folder Drive.
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -939,6 +1069,18 @@ export default function AdminPanel({
                                 <span>Tersembunyi</span>
                               </span>
                             )}
+                            {project.allowVisitorUpload && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-medium bg-[#4C2A85]/40 text-[#D4AF37] border-[#D4AF37]/40">
+                                <CloudUpload className="w-2.5 h-2.5 mr-0.5" />
+                                <span>Upload</span>
+                              </span>
+                            )}
+                            {!!pendingCounts[project.id] && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-bold bg-amber-500/15 text-amber-300 border-amber-500/40 animate-pulse">
+                                <Inbox className="w-2.5 h-2.5 mr-0.5" />
+                                <span>{pendingCounts[project.id]} Pending</span>
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1075,6 +1217,32 @@ export default function AdminPanel({
                             title="Bagikan galeri (Salin Link & QR Code)"
                           >
                             <Share2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              openPendingViewer(project.id, project.name);
+                            }}
+                            disabled={isSyncing}
+                            className={`relative p-1.5 rounded-lg border transition-all cursor-pointer ${
+                              pendingCounts[project.id]
+                                ? "border-amber-500/60 text-amber-400 hover:bg-amber-500/10"
+                                : "border-violet-950 hover:border-amber-500/40 text-slate-400 hover:text-amber-400 hover:bg-amber-500/5"
+                            } ${project.allowVisitorUpload ? "" : "opacity-40"}`}
+                            title={
+                              project.allowVisitorUpload
+                                ? "Lihat upload pending dari pengunjung"
+                                : "Upload mandiri nonaktif"
+                            }
+                          >
+                            <Inbox className="w-3.5 h-3.5" />
+                            {!!pendingCounts[project.id] && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-[#0C061A] text-[8px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1">
+                                {pendingCounts[project.id]}
+                              </span>
+                            )}
                           </button>
                           <button
                             type="button"
@@ -1386,6 +1554,136 @@ export default function AdminPanel({
               >
                 Ya, Hapus Galeri
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Uploads Viewer Modal (admin only) */}
+      {pendingViewer && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto"
+          onClick={() => setPendingViewer(null)}
+        >
+          <div
+            className="bg-[#120A21] border-2 border-[#D4AF37]/40 rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto custom-scrollbar shadow-2xl my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-[#4C2A85] px-5 py-3.5 flex items-center justify-between border-b border-[#D4AF37]/30 z-10">
+              <div className="flex items-center gap-2 min-w-0">
+                <Inbox className="w-4 h-4 text-[#D4AF37] shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-serif font-bold text-white truncate">
+                    Upload Pending
+                  </h3>
+                  <p className="text-[10px] text-slate-300 truncate">
+                    {pendingViewer.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPendingViewer(null)}
+                className="text-white/70 hover:text-white text-xl leading-none px-2"
+                title="Tutup"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 space-y-3">
+              {/* SA status banner */}
+              {saConfigured === false && (
+                <div className="flex items-start gap-2 text-[10px] text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-2.5 py-2">
+                  <KeyRound className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    Service Account belum dikonfigurasi. Foto di bawah diupload
+                    pengunjung dan menunggu Anda unduh lalu tambahkan manual,
+                    ATAU setel <code className="text-[#D4AF37]">GOOGLE_SERVICE_ACCOUNT</code> agar
+                    upload otomatis ke Drive.
+                  </span>
+                </div>
+              )}
+
+              {loadingPending ? (
+                <div className="flex items-center justify-center py-10">
+                  <RefreshCw className="w-5 h-5 text-[#D4AF37] animate-spin" />
+                </div>
+              ) : pendingList.length === 0 ? (
+                <div className="text-center py-10">
+                  <Inbox className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                  <p className="text-xs text-slate-400">
+                    Tidak ada upload pending untuk galeri ini.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400">
+                      {pendingList.length} foto menunggu
+                    </span>
+                    <button
+                      onClick={clearAllPending}
+                      disabled={clearingPending}
+                      className="text-[10px] px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50"
+                    >
+                      {clearingPending ? "Menghapus..." : "Hapus Semua"}
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {pendingList.map((u) => (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between bg-[#1F0F3D]/40 border border-violet-950/60 rounded-lg px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1 pr-2">
+                          <p className="text-[11px] text-white font-mono truncate">
+                            {u.fileName}
+                          </p>
+                          <p className="text-[9px] text-slate-500">
+                            {u.sizeKB} KB · {new Date(u.createdAt).toLocaleString("id-ID", {
+                              day: "2-digit",
+                              month: "short",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => downloadPendingUpload(u.id)}
+                            className="p-1.5 rounded-md border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-[#D4AF37] hover:bg-[#4C2A85]/20 transition-all"
+                            title="Unduh foto"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deletePendingUpload(u.id)}
+                            disabled={deletingPendingId === u.id}
+                            className="p-1.5 rounded-md border border-violet-950 hover:border-red-500/50 text-slate-400 hover:text-red-400 hover:bg-red-500/5 transition-all disabled:opacity-50"
+                            title="Hapus foto"
+                          >
+                            {deletingPendingId === u.id ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-start gap-1.5 text-[9.5px] text-slate-500 bg-[#1F0F3D]/30 rounded-md px-2.5 py-2 mt-2">
+                    <Mail className="w-3 h-3 shrink-0 mt-0.5" />
+                    <span>
+                      Tip: unduh foto, lalu upload manual ke folder Google
+                      Drive galeri, lalu klik &quot;Sinkron Drive&quot;. Atau setel
+                      Service Account agar proses ini otomatis.
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

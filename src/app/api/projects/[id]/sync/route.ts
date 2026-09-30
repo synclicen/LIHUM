@@ -1,352 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSeed, getAccountRole } from "@/lib/lihum";
+import { findProjectById } from "@/lib/queries";
+import { syncProjectWithToken } from "@/lib/drive-sync";
 import {
-  findProjectById,
-  replaceProjectPhotos,
-  updateProjectSync,
-  type NewPhotoInput,
-} from "@/lib/queries";
+  getServiceAccount,
+  getServiceAccountAccessToken,
+  DRIVE_SCOPE,
+} from "@/lib/google-service-account";
 
-// ── Auto-Filter: Filter small/low-quality files only ──
+// POST /api/projects/:id/sync
 //
-// When autoFilterEnabled is on, this function filters the raw photo list
-// BEFORE storing to DB. It removes files smaller than 100KB (likely
-// thumbnails, screenshots, or low-quality images).
+// Scans the project's Google Drive folder and refreshes the Photo table.
 //
-// NOTE: Burst/sequential dedup was REMOVED because photographers often
-// use fresh memory cards with sequential filenames (IMG_0001, IMG_0002,
-// etc.) that are NOT burst shots — they're a sequence of different
-// important moments. Dedup by filename was too aggressive and risked
-// hiding important photos.
+// Token resolution (in priority order):
+//  1. Admin/manager's personal OAuth token (Authorization: Bearer …)
+//     — used when admin clicks "Sinkron" in the panel after logging in.
+//  2. Google Service Account token — used when GOOGLE_SERVICE_ACCOUNT is
+//     configured AND no admin token is provided (e.g. auto-sync triggered
+//     after a visitor upload). Requires the SA email to be an Editor on
+//     the folder.
 //
-// For choosing the best photo from similar ones, use the AI Quality Score
-// feature (Sparkles ✨ button) which uses VLM to assess actual photo
-// content and quality — not just filenames.
+// Authorization:
+//  - Admin OAuth token path: caller must be a registered admin/manager.
+//  - Service Account path: caller must pass `x-internal-sync: 1` header
+//    (set by the upload route's internal fetch) OR be a registered admin.
+//    This prevents anonymous users from forcing expensive Drive scans.
 
-const MIN_FILE_SIZE_BYTES = 100 * 1024; // 100KB
-
-interface RawPhoto {
-  id: string;
-  name: string;
-  mimeType: string;
-  thumbnailLink: string;
-  webContentLink: string;
-  size: string;
-  createdTime: string;
-  modifiedTime: string;
-  parentName: string;
-}
-
-function filterPhotos(photos: RawPhoto[]): { kept: RawPhoto[]; stats: { smallFiles: number; total: number } } {
-  const stats = { smallFiles: 0, total: photos.length };
-
-  // Filter out files smaller than MIN_FILE_SIZE_BYTES
-  const kept = photos.filter((p) => {
-    const bytes = parseInt(p.size) || 0;
-    if (bytes > 0 && bytes < MIN_FILE_SIZE_BYTES) {
-      stats.smallFiles++;
-      return false;
-    }
-    return true;
-  });
-
-  console.log(`[Sync] Auto-filter: ${stats.total} total → ${kept.length} kept (${stats.smallFiles} small files filtered)`);
-  return { kept, stats };
-}
-
-const DRIVE_FIELDS =
-  "files(id, name, mimeType, thumbnailLink, webContentLink, createdTime, modifiedTime, size, parents)";
-
-/**
- * Checks if the given ID is a Shared Drive (Team Drive).
- * Returns the drive name if yes, null if no.
- */
-async function checkIsSharedDrive(
-  token: string,
-  id: string
-): Promise<{ isSharedDrive: boolean; name?: string }> {
-  try {
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/drives/${id}?fields=id,name`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (res.ok) {
-      const data: any = await res.json();
-      return { isSharedDrive: true, name: data.name };
-    }
-  } catch {
-    /* not a shared drive */
-  }
-  return { isSharedDrive: false };
-}
-
-/**
- * Lists ALL image files in a Shared Drive in one flat query (with pagination).
- * This gets every image across all folders/subfolders in the shared drive.
- */
-async function listAllImagesInSharedDrive(
-  token: string,
-  driveId: string
-): Promise<{ files: any[]; error?: string }> {
-  const allFiles: any[] = [];
-  let pageToken: string | undefined = undefined;
-
-  do {
-    const params = new URLSearchParams({
-      corpora: "drive",
-      driveId,
-      q: "mimeType contains 'image/' and trashed = false",
-      fields: `nextPageToken, ${DRIVE_FIELDS}`,
-      pageSize: "1000",
-      supportsAllDrives: "true",
-      includeItemsFromAllDrives: "true",
-    });
-    if (pageToken) params.set("pageToken", pageToken);
-
-    const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return {
-        files: allFiles,
-        error: `Gagal query Shared Drive (HTTP ${res.status}): ${errText.slice(0, 200)}`,
-      };
-    }
-
-    const data: any = await res.json();
-    const files: any[] = data.files || [];
-    allFiles.push(...files);
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-
-  return { files: allFiles };
-}
-
-/**
- * Lists children of a regular folder (My Drive or subfolder inside Shared Drive).
- * Tries multiple strategies for robustness.
- */
-async function listFolderChildren(
-  token: string,
-  folderId: string,
-  driveId?: string
-): Promise<{ files: any[]; strategy: string; error?: string }> {
-  const allFiles: any[] = [];
-  let pageToken: string | undefined = undefined;
-
-  do {
-    const params = new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: `nextPageToken, ${DRIVE_FIELDS}`,
-      pageSize: "1000",
-      supportsAllDrives: "true",
-      includeItemsFromAllDrives: "true",
-    });
-    // If we know the driveId (inside a shared drive), scope the query to that drive
-    if (driveId) {
-      params.set("corpora", "drive");
-      params.set("driveId", driveId);
-    }
-    if (pageToken) params.set("pageToken", pageToken);
-
-    const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
-    try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        return {
-          files: allFiles,
-          strategy: "none",
-          error: `HTTP ${res.status}: ${errText.slice(0, 150)}`,
-        };
-      }
-      const data: any = await res.json();
-      const files: any[] = data.files || [];
-      allFiles.push(...files);
-      pageToken = data.nextPageToken;
-    } catch (err) {
-      return { files: allFiles, strategy: "none", error: String(err) };
-    }
-  } while (pageToken);
-
-  return { files: allFiles, strategy: driveId ? "drive-scoped" : "default" };
-}
-
-/**
- * Recursively scans a folder tree for images.
- * If the root is a Shared Drive, uses flat query instead of recursive traversal.
- */
-async function listImagesRecursively(
-  token: string,
-  rootFolderId: string
-): Promise<{
-  results: { file: any; parentName: string }[];
-  foldersScanned: number;
-  maxDepthReached: number;
-  nonImageFilesSkipped: number;
-  foldersSkipped: number;
-  rootFolderError?: string;
-  rootStrategy?: string;
-  isSharedDrive?: boolean;
-  sharedDriveName?: string;
-}> {
-  // Step 1: Check if rootFolderId is a Shared Drive
-  const driveCheck = await checkIsSharedDrive(token, rootFolderId);
-
-  if (driveCheck.isSharedDrive) {
-    console.log(`[Sync] Root is Shared Drive: "${driveCheck.name}" — using flat query`);
-    // Shared Drive → list ALL images in one flat query (across all subfolders)
-    const { files, error } = await listAllImagesInSharedDrive(token, rootFolderId);
-    console.log(`[Sync] Shared Drive "${driveCheck.name}": ${files.length} images found`);
-
-    if (files.length === 0 && error) {
-      return {
-        results: [],
-        foldersScanned: 0,
-        maxDepthReached: 0,
-        nonImageFilesSkipped: 0,
-        foldersSkipped: 0,
-        rootFolderError: error,
-        rootStrategy: "shared-drive-flat",
-        isSharedDrive: true,
-        sharedDriveName: driveCheck.name,
-      };
-    }
-
-    // For shared drive flat query, parentName is empty (we don't know which
-    // subfolder each photo came from, but that's OK — all photos are captured)
-    return {
-      results: files.map((file) => ({ file, parentName: "" })),
-      foldersScanned: 1,
-      maxDepthReached: 0,
-      nonImageFilesSkipped: 0,
-      foldersSkipped: 0,
-      rootStrategy: "shared-drive-flat",
-      isSharedDrive: true,
-      sharedDriveName: driveCheck.name,
-    };
-  }
-
-  // Step 2: Regular folder → recursive BFS traversal
-  console.log(`[Sync] Root is regular folder — recursive traversal`);
-  const results: { file: any; parentName: string }[] = [];
-  const visited = new Set<string>([rootFolderId]);
-  const queue: { id: string; parentName: string; depth: number; driveId?: string }[] = [
-    { id: rootFolderId, parentName: "", depth: 0 },
-  ];
-
-  const MAX_DEPTH = 15;
-  const MAX_FOLDERS = 1000;
-  let foldersScanned = 0;
-  let maxDepthReached = 0;
-  let nonImageFilesSkipped = 0;
-  let foldersSkipped = 0;
-  let rootFolderError: string | undefined;
-  let rootStrategy: string | undefined;
-  let detectedDriveId: string | undefined;
-
-  while (queue.length > 0) {
-    if (foldersScanned >= MAX_FOLDERS) break;
-
-    const { id, parentName, depth, driveId } = queue.shift()!;
-    foldersScanned++;
-    if (depth > maxDepthReached) maxDepthReached = depth;
-
-    const { files, strategy, error } = await listFolderChildren(token, id, driveId || detectedDriveId);
-
-    if (depth === 0) {
-      rootStrategy = strategy;
-      if (error) rootFolderError = error;
-      // Detect driveId from returned files (if inside a shared drive)
-      for (const f of files) {
-        if (f.driveId) {
-          detectedDriveId = f.driveId;
-          break;
-        }
-      }
-    }
-
-    if (error && files.length === 0) {
-      foldersSkipped++;
-      continue;
-    }
-
-    console.log(`[Sync] Folder ${id} (depth ${depth}): ${files.length} items`);
-
-    for (const file of files) {
-      // Detect driveId from any file
-      if (file.driveId && !detectedDriveId) {
-        detectedDriveId = file.driveId;
-      }
-
-      if (file.mimeType === "application/vnd.google-apps.folder") {
-        if (depth + 1 <= MAX_DEPTH && !visited.has(file.id)) {
-          visited.add(file.id);
-          queue.push({ id: file.id, parentName: file.name, depth: depth + 1, driveId: detectedDriveId });
-        }
-      } else if (file.mimeType && file.mimeType.startsWith("image/")) {
-        results.push({ file, parentName });
-      } else {
-        nonImageFilesSkipped++;
-      }
-    }
-  }
-
-  // If regular folder returned 0, diagnose
-  if (results.length === 0 && !rootFolderError) {
-    // Check folder accessibility
-    try {
-      const checkRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${rootFolderId}?supportsAllDrives=true&fields=id,name,mimeType,shared,driveId`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!checkRes.ok) {
-        rootFolderError = `Folder tidak dapat diakses dengan token ini (HTTP ${checkRes.status}). Email yang login mungkin tidak punya akses ke folder.`;
-      } else {
-        const info: any = await checkRes.json();
-        if (info.driveId) {
-          // It's inside a shared drive but we got 0 — try flat query on the drive
-          console.log(`[Sync] Folder inside Shared Drive ${info.driveId} — trying flat query`);
-          const flatResult = await listAllImagesInSharedDrive(token, info.driveId);
-          if (flatResult.files.length > 0) {
-            return {
-              results: flatResult.files.map((file) => ({ file, parentName: "" })),
-              foldersScanned: 1,
-              maxDepthReached: 0,
-              nonImageFilesSkipped: 0,
-              foldersSkipped: 0,
-              rootStrategy: "shared-drive-flat-fallback",
-              isSharedDrive: true,
-              sharedDriveName: info.name,
-            };
-          }
-        }
-        rootFolderError = `Folder "${info.name}" accessible tapi 0 file gambar. Pastikan folder berisi file gambar (JPG/PNG).`;
-      }
-    } catch (err) {
-      rootFolderError = `Gagal mengecek folder: ${err}`;
-    }
-  }
-
-  console.log(`[Sync] Recursive scan done: ${results.length} images total, ${foldersScanned} folders scanned`);
-  return {
-    results,
-    foldersScanned,
-    maxDepthReached,
-    nonImageFilesSkipped,
-    foldersSkipped,
-    rootFolderError,
-    rootStrategy,
-    isSharedDrive: false,
-  };
-}
-
-// POST /api/projects/:id/sync — Admin/Manager only.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -354,7 +33,10 @@ export async function POST(
   await ensureSeed();
   const userEmail = req.headers.get("x-user-email") || undefined;
   const role = await getAccountRole(userEmail);
-  if (!role) {
+  const internalHeader = req.headers.get("x-internal-sync");
+  const isInternal = internalHeader === "1";
+
+  if (!role && !isInternal) {
     return NextResponse.json(
       { error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." },
       { status: 403 }
@@ -363,123 +45,46 @@ export async function POST(
 
   const { id } = await params;
   const authHeader = req.headers.get("authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const hasBearer = !!authHeader && authHeader.startsWith("Bearer ");
+  const sa = getServiceAccount();
+
+  let token: string;
+  let tokenSource: string;
+
+  if (hasBearer) {
+    token = authHeader!.split(" ")[1];
+    tokenSource = "admin-oauth";
+  } else if (sa) {
+    try {
+      token = await getServiceAccountAccessToken(DRIVE_SCOPE);
+      tokenSource = "service-account";
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "Gagal mendapatkan token service account." },
+        { status: 500 }
+      );
+    }
+  } else {
     return NextResponse.json(
       {
-        error: "Token otorisasi Google tidak ditemukan. Silakan masuk (Login) Admin terlebih dahulu.",
+        error:
+          "Token otorisasi Google tidak ditemukan. Silakan login Admin, atau konfigurasikan Service Account.",
       },
       { status: 401 }
     );
   }
-  const token = authHeader.split(" ")[1];
 
   const project = await findProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const folderId = project.driveFolderId;
-  if (!folderId) {
-    return NextResponse.json(
-      { error: "Format ID folder Google Drive tidak valid." },
-      { status: 400 }
-    );
-  }
-
   try {
-    const scanResult = await listImagesRecursively(token, folderId);
-    const scanned = scanResult.results;
-    console.log(`[Sync] Project ${id}: user=${userEmail}, ${scanned.length} images, strategy="${scanResult.rootStrategy}", sharedDrive=${scanResult.isSharedDrive}`);
-
-    if (scanned.length === 0 && scanResult.rootFolderError) {
-      scanResult.rootFolderError = `Email login: ${userEmail}. ${scanResult.rootFolderError}`;
-    }
-
-    // SAFETY GUARD: If scan returned 0 photos (Drive API error, permission
-    // issue, transient failure), DO NOT replace existing photos. Keep the
-    // last known good state so the gallery doesn't suddenly show "0 photos"
-    // to thousands of concurrent visitors. Return the diagnostic instead.
-    if (scanned.length === 0) {
-      console.warn(`[Sync] Project ${id}: 0 photos found — keeping existing photos, not replacing`);
-      return NextResponse.json({
-        success: false,
-        photoCount: 0,
-        debug: scanResult.rootFolderError || "Scan mengembalikan 0 foto. Foto yang ada dipertahankan.",
-        lastSyncedAt: new Date().toISOString(),
-      });
-    }
-
-    // ── Auto-Filter: if enabled, deduplicate burst shots + filter small files ──
-    let filteredStats: { smallFiles: number; total: number } | undefined;
-    let photosToStore = scanned;
-    if (project.autoFilterEnabled) {
-      const rawPhotos: RawPhoto[] = scanned.map(({ file, parentName }) => ({
-        id: file.id,
-        name: file.name,
-        mimeType: file.mimeType,
-        thumbnailLink: file.thumbnailLink || "",
-        webContentLink: file.webContentLink || "",
-        size: file.size || "0",
-        createdTime: file.createdTime || "",
-        modifiedTime: file.modifiedTime || "",
-        parentName,
-      }));
-      const filterResult = filterPhotos(rawPhotos);
-      photosToStore = filterResult.kept.map((p) => ({ file: p, parentName: p.parentName }));
-      filteredStats = filterResult.stats;
-    }
-
-    // Rename photos to: {galleryName} - {001}.ext
-    // Clean, consistent, hides original Drive filename and subfolder structure.
-    // Extension preserved from original file.
-    const galleryName = project.name;
-    const mappedPhotos: NewPhotoInput[] = photosToStore.map(({ file, parentName }, index) => {
-      // Extract extension from original filename
-      const extMatch = file.name.match(/\.([^.]+)$/);
-      const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : ".jpg";
-      // Format: "Gallery Name - 001.jpg"
-      const displayName = `${galleryName} - ${String(index + 1).padStart(3, "0")}${ext}`;
-
-      let sizeFormatted = "Unknown";
-      if (file.size) {
-        const bytes = parseInt(file.size);
-        if (bytes > 1048576) {
-          sizeFormatted = (bytes / 1048576).toFixed(1) + " MB";
-        } else {
-          sizeFormatted = (bytes / 1024).toFixed(0) + " KB";
-        }
-      }
-      return {
-        id: file.id,
-        name: displayName,
-        mimeType: file.mimeType,
-        thumbnailLink: file.thumbnailLink || "",
-        webContentLink: file.webContentLink || "",
-        size: sizeFormatted,
-        createdTime: file.createdTime ? file.createdTime.split("T")[0] : "Unknown",
-        modifiedTime: file.modifiedTime ? file.modifiedTime.split("T")[0] : (file.createdTime ? file.createdTime.split("T")[0] : ""),
-      };
-    });
-
-    const lastSyncedAt = new Date().toISOString();
-    await replaceProjectPhotos(id, mappedPhotos);
-    await updateProjectSync(id, mappedPhotos.length, lastSyncedAt);
-
-    return NextResponse.json({
-      success: true,
-      photoCount: mappedPhotos.length,
-      foldersScanned: scanResult.foldersScanned,
-      maxDepthReached: scanResult.maxDepthReached,
-      nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
-      foldersSkipped: scanResult.foldersSkipped,
-      rootStrategy: scanResult.rootStrategy,
-      isSharedDrive: scanResult.isSharedDrive,
-      sharedDriveName: scanResult.sharedDriveName,
-      filteredStats: filteredStats || undefined,
-      debug: scanResult.rootFolderError || undefined,
-      photos: mappedPhotos,
-      lastSyncedAt,
-    });
+    const result = await syncProjectWithToken(id, token);
+    console.log(
+      `[Sync] Project ${id}: source=${tokenSource}, user=${userEmail || "internal"}, ${result.photoCount} photos, strategy="${result.rootStrategy}"`
+    );
+    return NextResponse.json(result);
   } catch (err: any) {
     console.error("Drive Sync Error:", err);
     return NextResponse.json(
