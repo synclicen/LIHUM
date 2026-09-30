@@ -338,3 +338,38 @@ Stage Summary:
 - ✅ GitHub Actions CI/CD pipeline working end-to-end: git push → build → wrangler deploy → set TURSO_AUTH_TOKEN secret.
 - ✅ Production verified healthy after CI deploy.
 - ⚠️ Security: the GitHub token was shared in plain chat. User should revoke it at https://github.com/settings/tokens after this push and create a fresh one stored only in gitignored .env.deploy.
+
+---
+Task ID: 10
+Agent: main (Z.ai Code)
+Task: Create a "Settings" tab (admin only) in the AdminPanel for managing the Google Service Account and other app settings.
+
+Work Log:
+- Added `Setting` table (key-value) to ensureSchema in db.ts — idempotent migration for admin-configured settings.
+- Added CRUD to queries.ts: getSetting, setSetting (UPSERT), deleteSetting.
+- Refactored google-service-account.ts: getServiceAccount() is now async and reads from DB first (Setting key='google_service_account'), falls back to GOOGLE_SERVICE_ACCOUNT env var, then GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY. Added invalidateServiceAccountCache() to clear in-memory SA + token cache when the SA is updated via UI. Added isServiceAccountConfiguredSync() for quick status checks. Private key is NEVER returned to the client — only client_email + source ('db'|'env') are exposed.
+- Updated all callers of getServiceAccount() and isServiceAccountConfigured() to await (upload route, sync route, pending-uploads routes).
+- New API routes:
+  * GET /api/settings — aggregated: SA status + clientEmail + source, DB stats (projects/photos/accounts/pendingUploads/pendingStorageBytes), app config (appUrl, databaseUrl, nodeEnv). Admin only.
+  * GET /api/settings/service-account — SA status + clientEmail + source + storedInDatabase + storedInEnv. Admin only.
+  * PUT /api/settings/service-account — accepts { serviceAccount: "<JSON>" }, validates (parseable JSON, has client_email + private_key, PEM markers present), stores in DB Setting table, invalidates cache. Admin only.
+  * DELETE /api/settings/service-account — removes DB-stored SA (does NOT clear env var; notes if SA still active via env). Admin only.
+  * POST /api/settings/service-account/test — exchanges JWT for access token, calls Drive about endpoint, returns { success, clientEmail, driveUser, storageQuota, error? }. Admin only.
+- Added "Pengaturan" (Settings) tab to AdminPanel — third tab, admin-only. Four sections:
+  1. Google Service Account: status badge (AKTIF/BELUM DIKONFIGURASI), SA email + copy button, source indicator, Test connection button + result display, JSON key textarea, Save / Delete-from-DB buttons, collapsible step-by-step setup instructions (with Google Cloud Console links).
+  2. Database & Storage: live counts (galleries, photos, accounts, pending), pending storage usage (MB), Turso DB URL.
+  3. App Config: production URL (clickable), environment, Firebase authorized domains reminder.
+  4. Danger Zone: clear ALL pending uploads across all galleries.
+- Lint: 0 errors, 0 warnings.
+- Local tested: save SA (valid format, fake key) → GET confirms stored → test connection (fails as expected — fake key, clear error message) → delete → confirmed cleared. Auth guards: 403 for non-admin, 200 for admin.
+- Built + deployed to Cloudflare Workers (Version 98d8b65b). Also pushed to GitHub (commit a603632), GitHub Actions CI/CD run #36697330806 completed/success.
+- Production verified: /api/settings returns {projects:63, photos:12135, accounts:3, pendingUploads:0}. SA not configured (expected — admin hasn't set it up yet). All endpoints return correct HTTP codes (200 admin, 403 non-admin).
+
+Stage Summary:
+- ✅ Settings tab live on production (Version 98d8b65b, GitHub commit a603632)
+- ✅ Admin can configure Google Service Account entirely from the UI — no CLI needed
+- ✅ SA JSON stored in DB (access-controlled via Turso auth token); private key NEVER exposed to client
+- ✅ Test connection button verifies SA works (JWT exchange + Drive API call)
+- ✅ Collapsible setup instructions with direct links to Google Cloud Console
+- ✅ DB stats, app config, and danger zone (clear all pending) included
+- ✅ Backwards compatible: env var GOOGLE_SERVICE_ACCOUNT still works as fallback
