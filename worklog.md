@@ -293,3 +293,28 @@ Stage Summary:
 - Root cause: useEffect depending on a non-memoized function prop (onRefresh = loadProjects, not useCallback'd in page.tsx).
 - Fix: depend only on projects.length (stable unless gallery count changes).
 - Note: /api/projects still takes 3-4s on production (Turso latency from CF Workers to us-east-1) — this is a pre-existing issue, not caused by this change, and the spinner resolves once data loads.
+
+---
+Task ID: 8
+Agent: main (Z.ai Code)
+Task: Diagnose "halaman loading lambat" — is it caused by our Upload Mandiri changes? If so, revert.
+
+Work Log:
+- Measured production latency precisely: /api/projects = 3.3-4.5s, /api/config (no DB) = 50-450ms, local (file DB) = 6ms. The slowness is entirely DB round-trip time to Turso, not Worker overhead.
+- Counted DB statements in ensureSchema: 13 (1 batch CREATE ×3 + index, 7× ensureColumn which does PRAGMA + maybe ALTER, 1 CREATE TABLE PendingUpload, 1 CREATE INDEX). Plus ensureSeed does 2 more COUNT queries. Total ~15 round trips per request.
+- Root cause found: ensureSchema() and ensureSeed() both set their promise to null in a `finally` block, so the FULL schema migration + seed check re-ran on EVERY request. At ~0.3-0.4s per Turso round trip × 15 = 4-5s per request.
+- Honest assessment: this was a PRE-EXISTING bug from Task 2 (Turso migration), NOT from the recent Upload Mandiri work. The Upload Mandiri change added only 2 statements (PendingUpload table + index = ~0.8s). Reverting would have saved ~0.8s out of 4.5s — would NOT have fixed the problem.
+- Fix applied: cache the promise for the Worker isolate's lifetime (don't clear in finally). On failure (DB unreachable), clear so the next request retries. Same pattern for both ensureSchema and ensureSeed. Dedup for concurrent calls preserved (promise set before await).
+- Rebuilt + deployed via wrangler (GitHub token still revoked). Production Version aeb95739.
+- Measured before/after:
+  * Before: 4.4s, 4.1s, 3.3s (every request)
+  * After (cold isolate, first run): 4.5s, 4.6s, 4.0s — pays one-time schema cost
+  * After (warm isolate, subsequent): 0.28s, 0.28s, 0.33s — 15x FASTER
+- Verified via Agent Browser: home page renders clean, zero errors, ~4s first load (cold), fast after warmup.
+
+Stage Summary:
+- ✅ Slowness diagnosed: pre-existing ensureSchema/ensureSeed re-run-on-every-request bug, NOT from Upload Mandiri.
+- ✅ Fixed by caching the schema/seed promise for the isolate lifetime (1-line pattern change in db.ts + seed.ts).
+- ✅ 15x speedup on warm isolates (4.5s → 0.3s). First request per isolate still pays one-time ~4s cost (unavoidable — Cloudflare spins up new isolates and each must check schema once).
+- ✅ No revert needed — the Upload Mandiri feature is NOT the cause, and reverting it would not have helped.
+- Note: Turso DB is in us-east-1; first-request latency per isolate is bound by ~15 DB round trips × 0.3s. To eliminate even the cold-start cost, would need Turso closer to Workers (same region) or fewer schema statements (batch all PRAGMAs into one query). Current fix is the highest-impact, lowest-risk change.
