@@ -4,6 +4,7 @@ import {
   getAllProjectSummaries,
   getVisibleProjectSummaries,
   findProjectById,
+  findProjectByFolderId,
   createProject,
   toBool,
   type ProjectRow,
@@ -106,6 +107,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Warn (but allow) if this Drive folder is already used by another project.
+  // Each galeri should normally have its own folder; duplicate assignment is
+  // usually a setup mistake. We return a warning in the response so the UI
+  // can show it, but we still create the project (admin may have intended it).
+  const folderConflict = await findProjectByFolderId(driveFolderId);
+  const warning = folderConflict
+    ? `Folder Google Drive ini sudah dipakai galeri "${folderConflict.name}". Pastikan ini memang diinginkan — biasanya tiap galeri punya folder tersendiri.`
+    : undefined;
+
   const created = await createProject({
     id,
     name,
@@ -123,5 +133,8 @@ export async function POST(req: NextRequest) {
     createdAt: new Date().toISOString().split("T")[0],
   });
 
-  return NextResponse.json(summaryOut(created), { status: 201 });
+  return NextResponse.json(
+    { ...summaryOut(created), ...(warning ? { warning } : {}) },
+    { status: 201 }
+  );
 }

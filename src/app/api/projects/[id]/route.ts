@@ -9,6 +9,7 @@ import {
 import {
   getProjectWithPhotos,
   findProjectById,
+  findProjectByFolderId,
   updateProject,
   deleteProject,
   toBool,
@@ -179,6 +180,15 @@ export async function PUT(
     if (parsed) driveFolderId = parsed;
   }
 
+  // Warn (but allow) if this Drive folder is already used by ANOTHER project.
+  let warning: string | undefined;
+  if (driveFolderId && driveFolderId !== existing.driveFolderId) {
+    const folderConflict = await findProjectByFolderId(driveFolderId, id);
+    if (folderConflict) {
+      warning = `Folder Google Drive ini sudah dipakai galeri "${folderConflict.name}". Pastikan ini memang diinginkan — biasanya tiap galeri punya folder tersendiri.`;
+    }
+  }
+
   // ── Handle visibility + password updates ──
   const vis: "public" | "private" =
     visibility === "private" ? "private" : visibility === "public" ? "public" : (existing.visibility as "public" | "private");
@@ -224,7 +234,11 @@ export async function PUT(
     lastSyncedAt,
   });
 
-  return NextResponse.json(updated ? projectOut(updated) : { error: "Project not found" });
+  return NextResponse.json(
+    updated
+      ? { ...projectOut(updated), ...(warning ? { warning } : {}) }
+      : { error: "Project not found" }
+  );
 }
 
 // DELETE /api/projects/:id — Admin/Manager only

@@ -486,13 +486,19 @@ export default function AdminPanel({
         throw new Error(err.error || "Gagal menyimpan galeri.");
       }
 
-      setSuccessMsg(
-        editingId ? "Galeri berhasil diperbarui!" : "Galeri baru sukses dibuat!"
-      );
+      const data = await res.json();
+      if (data.warning) {
+        // Folder conflict — show as amber warning (project was still created/updated).
+        setErrorMsg(data.warning);
+        setTimeout(() => setErrorMsg(""), 8000);
+      } else {
+        setSuccessMsg(
+          editingId ? "Galeri berhasil diperbarui!" : "Galeri baru sukses dibuat!"
+        );
+        setTimeout(() => setSuccessMsg(""), 4000);
+      }
       resetForm();
       onRefresh();
-
-      setTimeout(() => setSuccessMsg(""), 4000);
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal memproses galeri.");
     } finally {
@@ -1229,15 +1235,36 @@ export default function AdminPanel({
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {projects.map((project) => {
+                {(() => {
+                  // Detect Drive folders that are shared by more than one
+                  // project — usually a setup mistake (each galeri should
+                  // have its own folder). Computed client-side from the
+                  // project list we already have.
+                  const folderCounts = new Map<string, number>();
+                  for (const p of projects) {
+                    if (p.driveFolderId) {
+                      folderCounts.set(
+                        p.driveFolderId,
+                        (folderCounts.get(p.driveFolderId) || 0) + 1
+                      );
+                    }
+                  }
+                  return projects.map((project) => {
                   const isSyncing = syncingId === project.id;
                   const isTogglingHide = togglingHideId === project.id;
                   const hasNoPhotos = project.photoCount === 0;
+                  const folderDuplicate =
+                    project.driveFolderId &&
+                    (folderCounts.get(project.driveFolderId) || 0) > 1;
 
                   return (
                     <div
                       key={project.id}
-                      className="bg-[#120A21] border border-violet-950/80 hover:border-[#D4AF37]/45 rounded-xl p-5 flex flex-col justify-between transition-all group hover:bg-[#1C0F32] shadow-xl"
+                      className={`bg-[#120A21] border rounded-xl p-5 flex flex-col justify-between transition-all group hover:bg-[#1C0F32] shadow-xl ${
+                        folderDuplicate
+                          ? "border-amber-500/50 hover:border-amber-400"
+                          : "border-violet-950/80 hover:border-[#D4AF37]/45"
+                      }`}
                     >
                       <div>
                         {/* Card Head */}
@@ -1488,9 +1515,18 @@ export default function AdminPanel({
                           foto tampil!
                         </div>
                       )}
+
+                      {/* Warning if Drive folder is shared with another gallery */}
+                      {folderDuplicate && (
+                        <div className="mt-2 text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-300 p-1.5 rounded text-center font-semibold flex items-center justify-center gap-1">
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          <span>Folder Drive dipakai galeri lain!</span>
+                        </div>
+                      )}
                     </div>
                   );
-                })}
+                  });
+                })()}
               </div>
             )}
           </div>

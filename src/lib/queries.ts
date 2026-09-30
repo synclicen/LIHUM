@@ -169,6 +169,24 @@ export async function findProjectById(id: string): Promise<ProjectRow | null> {
 }
 
 /**
+ * Finds a project that uses the given Google Drive folder ID (excluding the
+ * given project id). Used to detect duplicate folder assignments across
+ * galleries — usually a setup mistake by the admin.
+ */
+export async function findProjectByFolderId(
+  folderId: string,
+  excludeProjectId?: string
+): Promise<ProjectRow | null> {
+  const sql = excludeProjectId
+    ? "SELECT * FROM Project WHERE driveFolderId = ? AND id != ? LIMIT 1"
+    : "SELECT * FROM Project WHERE driveFolderId = ? LIMIT 1";
+  const args = excludeProjectId ? [folderId, excludeProjectId] : [folderId];
+  const r = await db.execute({ sql, args });
+  if (r.rows.length === 0) return null;
+  return asProject(r.rows[0] as Record<string, unknown>);
+}
+
+/**
  * Sort order for photos within a gallery.
  *  - "name-asc"  : A → Z (by file name)
  *  - "name-desc" : Z → A (by file name)
