@@ -114,12 +114,6 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   isHidden: Number(r.isHidden ?? 0),
   autoFilterEnabled: Number(r.autoFilterEnabled ?? 0),
   allowVisitorUpload: Number(r.allowVisitorUpload ?? 0),
-    allowVisitorUpload:
-      input.allowVisitorUpload !== undefined
-        ? input.allowVisitorUpload
-          ? 1
-          : 0
-        : existing.allowVisitorUpload,
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
