@@ -373,3 +373,31 @@ Stage Summary:
 - ✅ Collapsible setup instructions with direct links to Google Cloud Console
 - ✅ DB stats, app config, and danger zone (clear all pending) included
 - ✅ Backwards compatible: env var GOOGLE_SERVICE_ACCOUNT still works as fallback
+
+---
+Task ID: 11
+Agent: main (Z.ai Code)
+Task: Answer user's question about Service Account architecture (1 SA for all projects?) and verify each project has its own Drive folder. Add warning when a folder is assigned to multiple galleries.
+
+Work Log:
+- User asked two important questions:
+  1. "Apakah berarti hanya dari satu Google account saja?" (Does it mean only from one Google Account?)
+  2. "Apakah tiap project dengan folder yang sama? Harusnya kan berbeda?" (Does each project use the same folder? Shouldn't they be different?)
+- Answered Q1: YES, one Service Account for the entire app — this is correct by design. SA is an "app robot account", not per-gallery. It's shared because it's the Worker's identity, not a gallery's identity.
+- Investigated Q2: queried production /api/projects, found 51 projects, 50 unique folder IDs, 1 duplicate: "workshop-kurikulum-prodi-s-1-mpi" and "workshop-kurikulum-baru-prodi-s-1-mpi" both use folder 1oLy4av8vQsnagLDdUQqFYMIjl-44Fk--. This is a data-entry mistake (admin pasted the same Drive URL when creating the second galeri), not a code bug.
+- Code did NOT validate folder uniqueness on create/edit — admin could accidentally assign the same folder to multiple galleries.
+- Added findProjectByFolderId(folderId, excludeProjectId?) to queries.ts.
+- POST /api/projects: after parsing the folder ID, checks if it's already used by another project. Returns {warning} (not error — admin may intend it) if conflict found.
+- PUT /api/projects/[id]: same check when the folder is being changed.
+- AdminPanel handleSubmit: reads data.warning from response; shows as amber error message (8s) if present, green success otherwise.
+- AdminPanel project cards: computes folderCounts client-side from the project list; if a project's folder is used by >1 project, shows an amber "Folder Drive dipakai galeri lain!" badge + amber border on the card. This makes existing duplicates immediately visible to the admin.
+- Verified locally: POST with duplicate folder → returns warning "Folder Google Drive ini sudah dipakai galeri 'Lumina Place Gallery Demo'..."; PUT with duplicate → same warning; both still save (warning, not error).
+- Lint: 0 errors.
+- Built + deployed to Cloudflare Workers (Version 83e3f876). Pushed to GitHub (commit c8d0cf3).
+
+Stage Summary:
+- ✅ Answered: 1 Service Account for all galleries is correct by design.
+- ✅ Confirmed: each project SHOULD have its own folder — found 1 duplicate pair in production (admin input mistake, not code bug).
+- ✅ Added: folder-duplicate warning on create/edit (returns {warning} in API response).
+- ✅ Added: amber badge + border on project cards that share a folder.
+- ⚠️ Existing duplicate ("workshop-kurikulum-prodi-s-1-mpi" vs "workshop-kurikulum-baru-prodi-s-1-mpi") is still in production — admin should edit one of them to point to the correct folder. The new amber badge makes it visible.
