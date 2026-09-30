@@ -274,3 +274,22 @@ Stage Summary:
     2. Share the Drive folder with the SA email as Editor
     3. `wrangler secret put GOOGLE_SERVICE_ACCOUNT` (paste the JSON)
   Until then, visitor uploads go to the pending queue (admin reviews via Inbox).
+
+---
+Task ID: 7
+Agent: main (Z.ai Code)
+Task: Fix "halaman LIHUM error dan hanya berputar putar" (page spinning) — regression from the Upload Mandiri deploy.
+
+Work Log:
+- Diagnosed root cause: the useEffect I added in AdminPanel (Task 6) to load pending-upload counts had `onRefresh` in its dependency array. `onRefresh` is the `loadProjects` function from page.tsx — a plain async function (NOT wrapped in useCallback), so it gets a NEW reference on every render of page.tsx. This caused an infinite loop: effect fires → setPendingCounts/setPendingTotal/setSaConfigured → AdminPanel re-renders → (parent re-renders too, new onRefresh ref) → effect fires again → forever. The browser would be stuck re-rendering + firing /api/pending-uploads fetches continuously, making the page appear to "spin" endlessly. This only affected logged-in admins (AdminPanel only mounts when admin is logged in), but the user IS the admin.
+- Confirmed via Agent Browser network log: 5 rapid GET /api/projects requests in 50ms (the loop also caused parent re-renders which triggered the 30s polling + auth re-fetch path).
+- Fix: removed `onRefresh` from the useEffect dependency array, keeping only `projects.length` (fires on mount + when galleries are created/deleted). loadPendingCounts is self-contained (doesn't call onRefresh); per-item delete + clear-all handlers already call loadPendingCounts() explicitly.
+- Lint: 0 errors.
+- Rebuilt + redeployed via wrangler (GitHub token still revoked). Production Version 0b9e8f92.
+- Verified production: home page renders in ~10s, only 2 GET /api/projects requests (normal React Strict Mode double-fire, not 5+), zero console errors, zero page errors. /upload page also renders correctly.
+
+Stage Summary:
+- ✅ Infinite re-fetch loop FIXED and deployed to production (Version 0b9e8f92).
+- Root cause: useEffect depending on a non-memoized function prop (onRefresh = loadProjects, not useCallback'd in page.tsx).
+- Fix: depend only on projects.length (stable unless gallery count changes).
+- Note: /api/projects still takes 3-4s on production (Turso latency from CF Workers to us-east-1) — this is a pre-existing issue, not caused by this change, and the spinner resolves once data loads.
