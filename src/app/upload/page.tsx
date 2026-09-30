@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, LogIn, ImageIcon } from "lucide-react";
 
@@ -11,7 +11,15 @@ interface UploadPhoto {
   preview: string;
 }
 
-export default function UploadPage() {
+export default function UploadPageWrapper() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0C061A] flex items-center justify-center"><Loader2 className="w-10 h-10 text-[#D4AF37] animate-spin" /></div>}>
+      <UploadPage />
+    </Suspense>
+  );
+}
+
+function UploadPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const galleryId = searchParams.get("gallery") || "";
