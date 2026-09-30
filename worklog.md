@@ -318,3 +318,23 @@ Stage Summary:
 - ✅ 15x speedup on warm isolates (4.5s → 0.3s). First request per isolate still pays one-time ~4s cost (unavoidable — Cloudflare spins up new isolates and each must check schema once).
 - ✅ No revert needed — the Upload Mandiri feature is NOT the cause, and reverting it would not have helped.
 - Note: Turso DB is in us-east-1; first-request latency per isolate is bound by ~15 DB round trips × 0.3s. To eliminate even the cold-start cost, would need Turso closer to Workers (same region) or fewer schema statements (batch all PRAGMAs into one query). Current fix is the highest-impact, lowest-risk change.
+
+---
+Task ID: 9
+Agent: main (Z.ai Code)
+Task: Push pending local commits to GitHub (repo was 8 commits behind production due to revoked previous token). Trigger GitHub Actions auto-deploy.
+
+Work Log:
+- User provided a new GitHub Personal Access Token (ghp_0Yotl...). Verified valid via API (HTTP 200, user synclicen).
+- Local was 8 commits ahead of remote (256166a..7a68df9): the Upload Mandiri feature, AdminPanel infinite-loop fix, and the ensureSchema/ensureSeed performance fix — all previously deployed directly via wrangler but never pushed to GitHub.
+- Pushed all 8 commits to https://github.com/synclicen/LIHUM main branch.
+- GitHub Actions "Deploy to Cloudflare Workers" workflow triggered automatically (run ID 36694040024).
+- Polled status: completed/success in ~45 seconds.
+- Production re-deployed via CI pipeline (same code as the direct wrangler deploy, now also built via GitHub Actions — keeps the audit trail complete).
+- Post-deploy verification: production healthy. /api/projects shows the expected cold-isolate-then-warm-isolate pattern: 1.0s, 4.3s (cold), 0.33s (warm). Home page 0.23s.
+
+Stage Summary:
+- ✅ GitHub repo synclicen/LIHUM now up-to-date with production (all 8 commits pushed).
+- ✅ GitHub Actions CI/CD pipeline working end-to-end: git push → build → wrangler deploy → set TURSO_AUTH_TOKEN secret.
+- ✅ Production verified healthy after CI deploy.
+- ⚠️ Security: the GitHub token was shared in plain chat. User should revoke it at https://github.com/settings/tokens after this push and create a fresh one stored only in gitignored .env.deploy.
