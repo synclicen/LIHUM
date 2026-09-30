@@ -60,6 +60,7 @@ export default function AdminPanel({
   const [password, setPassword] = useState("");
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
+  const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState<
     "30s" | "1m" | "3m" | "5m" | "1h" | "6h"
   >("3m");
@@ -98,6 +99,7 @@ export default function AdminPanel({
     setPassword("");
     setAutoSyncEnabled(false);
     setAutoFilterEnabled(false);
+    setAllowVisitorUpload(false);
     setAutoSyncInterval("3m");
     setErrorMsg("");
   };
@@ -113,6 +115,7 @@ export default function AdminPanel({
     setPassword(""); // never pre-fill — admin can leave empty to keep existing
     setAutoSyncEnabled(!!project.autoSyncEnabled);
     setAutoFilterEnabled(!!project.autoFilterEnabled);
+    setAllowVisitorUpload(!!project.allowVisitorUpload);
     setAutoSyncInterval(project.autoSyncInterval || "3m");
     setErrorMsg("");
   };
@@ -172,6 +175,7 @@ export default function AdminPanel({
           visibility,
           password: visibility === "private" ? password : undefined,
           autoFilterEnabled,
+          allowVisitorUpload,
           autoSyncEnabled,
           autoSyncInterval,
         }),
@@ -661,6 +665,36 @@ export default function AdminPanel({
             </p>
           </div>
         )}
+
+        {/* Visitor Upload Section */}
+        <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="block text-[11px] font-bold text-slate-300 uppercase tracking-widest">
+              Upload Mandiri Pengunjung
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={allowVisitorUpload}
+                onChange={(e) => setAllowVisitorUpload(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
+              <span className="ml-2.5 text-[10px] font-mono font-bold text-[#D4AF37]">
+                {allowVisitorUpload ? "AKTIF" : "NONAKTIF"}
+              </span>
+            </label>
+          </div>
+          {allowVisitorUpload && (
+            <div className="space-y-1.5 animate-fadeIn">
+              <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
+                Pengunjung dapat mengupload foto ke galeri via QR code upload.
+                Maksimal 5 foto per sesi. Foto masuk ke folder Google Drive
+                dan muncul setelah admin sinkron.
+              </p>
+            </div>
+          )}
+        </div>
 
         {/* Auto-Filter Section */}
         <div className="border-t border-[#D4AF37]/15 pt-4 mt-2 space-y-3">

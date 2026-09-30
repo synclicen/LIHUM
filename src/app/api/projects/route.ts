@@ -20,6 +20,7 @@ function summaryOut(p: ProjectRow) {
     visibility: p.visibility as "public" | "private",
     isHidden: toBool(p.isHidden),
     autoFilterEnabled: toBool(p.autoFilterEnabled),
+    allowVisitorUpload: toBool(p.allowVisitorUpload),
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
     visibility,
     password,
     autoFilterEnabled,
+    allowVisitorUpload,
     autoSyncEnabled,
     autoSyncInterval,
   } = body;
@@ -115,6 +117,7 @@ export async function POST(req: NextRequest) {
     password: hashedPassword,
     isHidden: false, // new galleries are visible by default
     autoFilterEnabled: autoFilterEnabled === true,
+    allowVisitorUpload: allowVisitorUpload === true,
     autoSyncEnabled: autoSyncEnabled === true,
     autoSyncInterval: autoSyncInterval || "3m",
     createdAt: new Date().toISOString().split("T")[0],
