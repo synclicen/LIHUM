@@ -182,9 +182,14 @@ export default function AdminPanel({
     }
   };
 
+  // Load pending upload counts + SA status on mount, and whenever the number
+  // of galleries changes (create/delete). We intentionally do NOT depend on
+  // `onRefresh` here — it's a plain function (not useCallback'd) in the
+  // parent, so depending on it would cause an infinite re-fetch loop:
+  // effect fires → setState → re-render → new onRefresh ref → effect fires…
   useEffect(() => {
     loadPendingCounts();
-  }, [projects.length, onRefresh]);
+  }, [projects.length]);
 
   const openPendingViewer = async (projectId: string, projectName: string) => {
     setPendingViewer({ id: projectId, name: projectName });
