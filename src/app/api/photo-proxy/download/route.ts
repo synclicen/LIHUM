@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findPhotoById } from "@/lib/queries";
+import { findPhotoById, incrementProjectDownloads } from "@/lib/queries";
 
 // GET /api/photo-proxy/download?id=FILE_ID&name=FILENAME
 //
@@ -10,6 +10,8 @@ import { findPhotoById } from "@/lib/queries";
 // 1. webContentLink (stored in DB during sync) — most reliable
 // 2. uc?export=download with redirect:follow
 // 3. Fallback: redirect to Google Drive (filename = Google's default)
+//
+// On every successful download, increments the parent gallery's downloadCount.
 
 const CACHE_7_DAYS = "public, max-age=604800, s-maxage=604800";
 
@@ -32,6 +34,10 @@ export async function GET(req: NextRequest) {
       try {
         const response = await fetch(sample.webContentLink, { redirect: "follow" });
         if (response.ok) {
+          // Increment download counter (fire-and-forget)
+          if (sample.projectId) {
+            incrementProjectDownloads(sample.projectId).catch(() => {});
+          }
           return new NextResponse(response.body, {
             status: 200,
             headers: {
@@ -75,6 +81,10 @@ export async function GET(req: NextRequest) {
           if (contentType.startsWith("image/") ||
               contentType.startsWith("application/octet-stream") ||
               contentType.startsWith("application/binary")) {
+            // Increment download counter (fire-and-forget, only on real success)
+            if (photo && photo.projectId) {
+              incrementProjectDownloads(photo.projectId).catch(() => {});
+            }
             return new NextResponse(response.body, {
               status: 200,
               headers: {
@@ -91,7 +101,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // All strategies failed — redirect as fallback
+    // All strategies failed — redirect as fallback.
+    // Still count as a download attempt since the user clicked download
+    // (the browser will fetch directly from Google Drive).
+    if (photo && photo.projectId) {
+      incrementProjectDownloads(photo.projectId).catch(() => {});
+    }
     return NextResponse.redirect(
       `https://drive.google.com/uc?export=download&id=${fileId}`,
       {

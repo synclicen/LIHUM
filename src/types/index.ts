@@ -20,6 +20,8 @@ export interface Project {
   isHidden?: boolean;
   autoFilterEnabled?: boolean;
   allowVisitorUpload?: boolean;
+  viewCount?: number;
+  downloadCount?: number;
   photos: Photo[];
   autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
   lastSyncedAt?: string;
@@ -40,6 +42,8 @@ export interface ProjectSummary {
   isHidden?: boolean;
   autoFilterEnabled?: boolean;
   allowVisitorUpload?: boolean;
+  viewCount?: number;
+  downloadCount?: number;
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;

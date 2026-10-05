@@ -10,6 +10,7 @@ import {
   getProjectWithPhotos,
   findProjectById,
   findProjectByFolderId,
+  incrementProjectViews,
   updateProject,
   deleteProject,
   toBool,
@@ -44,6 +45,8 @@ function projectOut(p: ProjectRow) {
     isHidden: toBool(p.isHidden),
     autoFilterEnabled: toBool(p.autoFilterEnabled),
     allowVisitorUpload: toBool(p.allowVisitorUpload),
+    viewCount: p.viewCount,
+    downloadCount: p.downloadCount,
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
@@ -124,6 +127,16 @@ export async function GET(
   const limitParam = Math.min(100, parseInt(searchParams.get("limit") || "100", 10));
   const totalFiltered = filtered.length;
   const paginatedPhotos = filtered.slice(offsetParam, offsetParam + limitParam);
+
+  // ── Increment view counter (first page only, non-admin only) ──
+  // Count a "view" only when a visitor opens the gallery for the first time
+  // in this session (offset=0), NOT on every pagination/scroll fetch.
+  // Admins/managers opening the gallery don't inflate the counter.
+  if (!isAdmin && offsetParam === 0) {
+    incrementProjectViews(id).catch((err) =>
+      console.warn("[Views] Failed to increment:", err)
+    );
+  }
 
   return NextResponse.json({
     ...projectOut(project),

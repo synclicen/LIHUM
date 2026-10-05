@@ -129,6 +129,10 @@ export async function ensureSchema(): Promise<void> {
     await ensureColumn("Project", "autoFilterEnabled", "INTEGER NOT NULL DEFAULT 0");
     // allowVisitorUpload: 0 = no, 1 = visitors can upload photos via /upload page
     await ensureColumn("Project", "allowVisitorUpload", "INTEGER NOT NULL DEFAULT 0");
+    // viewCount: how many times the gallery page was viewed by visitors.
+    // downloadCount: how many times photos from this gallery were downloaded.
+    await ensureColumn("Project", "viewCount", "INTEGER NOT NULL DEFAULT 0");
+    await ensureColumn("Project", "downloadCount", "INTEGER NOT NULL DEFAULT 0");
 
     // Migrations: add modifiedTime to Photo table for "Date Modified" sort.
     await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");

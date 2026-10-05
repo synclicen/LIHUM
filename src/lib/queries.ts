@@ -19,6 +19,8 @@ export interface ProjectRow {
   isHidden: number; // 0 | 1
   autoFilterEnabled: number; // 0 | 1
   allowVisitorUpload: number; // 0 | 1
+  viewCount: number; // visitor page views
+  downloadCount: number; // photo downloads
   autoSyncEnabled: number; // 0 | 1
   autoSyncInterval: string;
   lastSyncedAt: string;
@@ -114,6 +116,8 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   isHidden: Number(r.isHidden ?? 0),
   autoFilterEnabled: Number(r.autoFilterEnabled ?? 0),
   allowVisitorUpload: Number(r.allowVisitorUpload ?? 0),
+  viewCount: Number(r.viewCount ?? 0),
+  downloadCount: Number(r.downloadCount ?? 0),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
@@ -361,6 +365,33 @@ export async function updateProjectSync(
   await db.execute({
     sql: "UPDATE Project SET photoCount = ?, lastSyncedAt = ? WHERE id = ?",
     args: [photoCount, lastSyncedAt, id],
+  });
+}
+
+/**
+ * Increments the gallery's view counter by 1. Called when a visitor (non-admin)
+ * opens the gallery page. Idempotent-safe (uses UPDATE ... SET viewCount = viewCount + 1).
+ */
+export async function incrementProjectViews(id: string): Promise<void> {
+  await db.execute({
+    sql: "UPDATE Project SET viewCount = viewCount + 1 WHERE id = ?",
+    args: [id],
+  });
+}
+
+/**
+ * Increments the gallery's download counter by the given count (default 1).
+ * Called when a visitor downloads a photo. For multi-select bulk downloads,
+ * pass the number of photos downloaded.
+ */
+export async function incrementProjectDownloads(
+  id: string,
+  count: number = 1
+): Promise<void> {
+  if (count <= 0) return;
+  await db.execute({
+    sql: "UPDATE Project SET downloadCount = downloadCount + ? WHERE id = ?",
+    args: [count, id],
   });
 }
 

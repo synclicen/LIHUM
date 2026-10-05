@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Share2,
   Download,
+  Eye,
   QrCode,
   Camera,
   Search,
@@ -617,12 +618,34 @@ export default function App() {
                         {project.description || "Kumpulan foto kegiatan."}
                       </p>
 
-                      {/* Footer: photo count + open */}
+                      {/* Footer: photo count + views + downloads + open */}
                       <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                         <span className="text-[9px] font-mono bg-[#1F0F3D] text-[#D4AF37] py-0.5 px-2 rounded-full font-bold">
                           {project.photoCount} Foto
                         </span>
                         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          {(project.viewCount || 0) > 0 && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[8.5px] text-slate-400 font-mono"
+                              title={`${project.viewCount?.toLocaleString("id-ID")} kunjungan`}
+                            >
+                              <Eye className="w-2.5 h-2.5" />
+                              {project.viewCount! >= 1000
+                                ? `${(project.viewCount! / 1000).toFixed(1)}k`
+                                : project.viewCount}
+                            </span>
+                          )}
+                          {(project.downloadCount || 0) > 0 && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[8.5px] text-slate-400 font-mono"
+                              title={`${project.downloadCount?.toLocaleString("id-ID")} unduhan`}
+                            >
+                              <Download className="w-2.5 h-2.5" />
+                              {project.downloadCount! >= 1000
+                                ? `${(project.downloadCount! / 1000).toFixed(1)}k`
+                                : project.downloadCount}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => setShareProject(project)}

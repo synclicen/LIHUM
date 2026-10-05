@@ -21,6 +21,7 @@ import {
   CheckSquare,
   Square,
   XCircle,
+  Eye,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -535,6 +536,29 @@ export default function GalleryView({
                     {project.description}
                   </p>
                 )}
+                {/* Stats: page views + photo downloads */}
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span
+                    className="inline-flex items-center gap-0.5 text-[8.5px] md:text-[9px] text-slate-400 bg-[#4C2A85]/30 border border-violet-700/30 px-1.5 py-0.5 rounded-md font-mono"
+                    title="Jumlah kunjungan halaman galeri ini"
+                  >
+                    <Eye className="w-2.5 h-2.5 text-[#D4AF37]/70" />
+                    <span className="font-semibold text-slate-300">
+                      {(project.viewCount || 0).toLocaleString("id-ID")}
+                    </span>
+                    <span className="text-slate-500">views</span>
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-0.5 text-[8.5px] md:text-[9px] text-slate-400 bg-[#4C2A85]/30 border border-violet-700/30 px-1.5 py-0.5 rounded-md font-mono"
+                    title="Jumlah foto yang diunduh dari galeri ini"
+                  >
+                    <Download className="w-2.5 h-2.5 text-[#D4AF37]/70" />
+                    <span className="font-semibold text-slate-300">
+                      {(project.downloadCount || 0).toLocaleString("id-ID")}
+                    </span>
+                    <span className="text-slate-500">unduhan</span>
+                  </span>
+                </div>
               </div>
               {onShare && (
                 <button

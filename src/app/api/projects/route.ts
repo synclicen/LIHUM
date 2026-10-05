@@ -22,6 +22,8 @@ function summaryOut(p: ProjectRow) {
     isHidden: toBool(p.isHidden),
     autoFilterEnabled: toBool(p.autoFilterEnabled),
     allowVisitorUpload: toBool(p.allowVisitorUpload),
+    viewCount: p.viewCount,
+    downloadCount: p.downloadCount,
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
