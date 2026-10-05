@@ -442,3 +442,32 @@ Stage Summary:
 - ✅ Lint passes with 0 errors.
 - ⚠️ Pre-existing TS errors in AdminPanel.tsx (handleSyncDrive's `project.autoFilterEnabled` ref + `"30s"` interval comparison) NOT fixed — out of scope, were there before this task.
 - ⚠️ Card folder-count badge was intentionally NOT implemented (per task spec — would require N extra fetches); folder count is only visible inside the edit modal.
+
+---
+Task ID: 14
+Agent: main (Z.ai Code)
+Task: Tambah statistik kunjungan (views) + unduhan (downloads) per galeri, tampilkan di sebelah judul proyek di GalleryView dan home page cards.
+
+Work Log:
+- DB: tambah kolom viewCount + downloadCount (INTEGER DEFAULT 0) ke tabel Project, idempotent migration via ensureColumn.
+- queries.ts: tambah incrementProjectViews(id) + incrementProjectDownloads(id, count). Update ProjectRow interface + asProject mapper.
+- GET /api/projects/[id]: increment viewCount (fire-and-forget, tidak block response) saat visitor non-admin membuka galeri dengan offset=0 (first page only, tidak hitung pagination/scroll). Skip admin agar polling admin tidak inflate count. Skip private gallery yang belum unlock (password salah) agar tidak hitung saat orang coba-coba password.
+- GET /api/photo-proxy/download: increment downloadCount per foto (fire-and-forget) saat download berhasil via strategi apapun (webContentLink, uc?export, thumbnail, atau redirect fallback).
+- projectOut + summaryOut: expose viewCount + downloadCount ke response API.
+- types/index.ts: tambah viewCount? + downloadCount? ke interface Project + ProjectSummary.
+- GalleryView: badge "N views" (ikon Eye) + "N unduhan" (ikon Download) di sebelah judul galeri, di bawah deskripsi. Format angka id-ID (titik pemisah ribuan). Font-mono, background ungu gelap.
+- page.tsx (home cards): badge views + downloads kecil di footer card (hanya jika > 0, format 1.2k untuk ribuan agar compact).
+- Lint: 0 errors.
+- Local test: GET galeri 3x → viewCount 0→3. Download 2x → downloadCount 0→2. Home list mengembalikan counts.
+- Agent Browser + VLM verify: badge "5 views" + "2 unduhan" tampil jelas di sebelah judul "Lumina Place Gallery Demo".
+- Built + pushed to GitHub (commit fc8ed4a, rebase atas commit CI). GitHub Actions run #37381036262 completed/success.
+- Production verified: galeri "Foto Pemindahan Tali Toga Wisuda 90" (1918 foto) → viewCount naik 0→1→2 setelah GET. Home list mengembalikan views/downloads per galeri. UI menampilkan "2 views, 0 unduhan" di sebelah judul. Zero console errors.
+
+Stage Summary:
+- ✅ Statistik views + downloads live di produksi (commit fc8ed4a)
+- ✅ Counter naik otomatis: setiap visitor buka galeri = +1 view, setiap foto diunduh = +1 download
+- ✅ Tampil di GalleryView (besar, di sebelah judul) + home cards (kecil, di footer card jika > 0)
+- ✅ Admin polling tidak inflate count (skip admin viewCount increment)
+- ✅ Private gallery yang belum unlock tidak dihitung view-nya
+- ✅ Format angka id-ID (1.234) + compact 1.2k untuk ribuan di home cards
+- Catatan: semua galeri existing mulai dari 0 (kolom baru default 0). Counter akan naik自然 saat ada traffic.
