@@ -401,3 +401,44 @@ Stage Summary:
 - ✅ Added: folder-duplicate warning on create/edit (returns {warning} in API response).
 - ✅ Added: amber badge + border on project cards that share a folder.
 - ⚠️ Existing duplicate ("workshop-kurikulum-prodi-s-1-mpi" vs "workshop-kurikulum-baru-prodi-s-1-mpi") is still in production — admin should edit one of them to point to the correct folder. The new amber badge makes it visible.
+
+---
+Task ID: 12-AdminPanel-cleanup
+Agent: subagent (Z.ai Code)
+Task: Clean up AdminPanel (remove Upload Mandiri + Settings tab) and ShareModal (remove upload QR), add "Sumber Folder Tambahan" section to the gallery edit form.
+
+Work Log:
+- Read worklog entries for Task IDs 6, 10, 11 to understand prior Upload Mandiri / Settings tab / folder-duplicate warning work.
+- Read ShareModal.tsx and AdminPanel.tsx (2282 lines) in full.
+- ShareModal.tsx cleanup (312 → 278 lines):
+  * Removed `allowVisitorUpload?: boolean` from `ShareModalProps.project`.
+  * Removed `uploadUrl` and `uploadQrUrl` variable declarations (only `shareUrl` + `qrUrl` remain).
+  * Removed the entire second "QR Upload Foto" block (the `{project.allowVisitorUpload && (...)}` section with uploadQrUrl image + upload link).
+  * Modal now renders ONE QR code (view/download) + copy-link widget + download-QR button only.
+- AdminPanel.tsx cleanup (2282 → 1607 lines):
+  * Imports: removed `Inbox`, `Download`, `KeyRound`, `CloudUpload`, `Mail`, `Settings`, `ShieldCheck`, `Database`, `Server`, `CheckCircle2`, `XCircle`, `Copy` (12 icons no longer referenced). Kept `AlertTriangle` (still used by the folder-duplicate warning badge).
+  * `activeTab` type narrowed from `"projects" | "accounts" | "settings"` → `"projects" | "accounts"`.
+  * Removed state: `pendingCounts`, `pendingTotal`, `saConfigured`, `pendingViewer`, `pendingList`, `loadingPending`, `deletingPendingId`, `clearingPending`, `settingsData`, `loadingSettings`, `saJsonInput`, `savingSa`, `deletingSa`, `testingSa`, `saTestResult`, `showSaInstructions`, `clearingAllPending`, `allowVisitorUpload`.
+  * Added state: `additionalFolders`, `loadingFolders`, `newFolderUrl`, `newFolderLabel`, `addingFolder`, `deletingFolderId`.
+  * Removed useEffect that called `loadSettings` on settings-tab activation; the tab-change useEffect now only loads accounts.
+  * Removed `loadPendingCounts` useEffect.
+  * Removed handlers: `loadPendingCounts`, `openPendingViewer`, `downloadPendingUpload`, `deletePendingUpload`, `clearAllPending`, `loadSettings`, `handleSaveSa`, `handleDeleteSa`, `handleTestSa`, `handleClearAllPendingGlobal`, `copyToClipboard`.
+  * Added handlers: `loadAdditionalFolders(projectId)`, `handleAddFolder()`, `handleDeleteFolder(folderId)` — all wired to the new `/api/projects/[id]/folders` + `/api/projects/[id]/folders/[folderId]` routes with `x-user-email` header.
+  * Removed `allowVisitorUpload` from `handleSubmit` PUT/POST body and from `resetForm` + `handleEditClick`.
+  * `handleEditClick` now calls `loadAdditionalFolders(project.id)` after setting form fields; `resetForm` now clears `additionalFolders`, `newFolderUrl`, `newFolderLabel`.
+  * Form: removed the entire "Upload Mandiri Pengunjung" section (toggle + SA status info box) and replaced it with the new "Sumber Folder Tambahan" section (edit mode only): header with count badge, info text, scrollable list of existing folders (label + truncated URL + trash button), add-folder subform (URL input + label input + "Tambah Folder" button), and a footer note about running sync after add/delete + dedupe behavior.
+  * Removed the "Pengaturan" (Settings) tab button (3rd tab) and its entire render branch — the conditional tab render is now a simple `activeTab === "projects" ? (...) : (...)` ternary.
+  * Removed from project cards: the `allowVisitorUpload` badge ("Upload"), the pending-upload count badge ("N Pending"), and the "Inbox" button (with its conditional amber styling + counter pill).
+  * Removed the "Pending Uploads Viewer Modal" (the entire `{pendingViewer && (...)}` block — header, SA-status banner, list of pending uploads with download/delete buttons, "clear all" button, mail tip).
+  * Folder-duplicate warning (Task 11) PRESERVED: `folderCounts` Map + `folderDuplicate` flag + amber `AlertTriangle` badge + amber card border + the `{data.warning}` handling in `handleSubmit`.
+- Lint: `bun run lint` → 0 errors, 0 warnings. (`bun run tsc --noEmit` shows only 2 pre-existing TS errors in AdminPanel.tsx — `handleSyncDrive`'s reference to `project.autoFilterEnabled` (function only takes `projectId` string) and the `"30s"` interval comparison against `ProjectSummary.autoSyncInterval` — both confirmed pre-existing via `git stash` baseline. Both unrelated to this task; not fixed to avoid scope creep.)
+
+Stage Summary:
+- ✅ ShareModal: Upload-Mandiri QR fully removed; one QR code remains (view/download).
+- ✅ AdminPanel: ~675 lines deleted. Upload-Mandiri toggle + SA-status info box, Settings tab (entire SA management UI, DB/storage stats, app config, danger zone), pending-uploads Inbox button + viewer modal, all related state/handlers/effect removed.
+- ✅ New "Sumber Folder Tambahan" feature added to the gallery edit form (edit mode only): lists additional Drive folders with delete buttons, exposes an add-folder subform (URL + label) wired to the new `/api/projects/[id]/folders` POST/GET/DELETE routes; refreshes list on add/delete; surfaces errors via `setErrorMsg`.
+- ✅ Folder-duplicate warning (Task 11) preserved untouched.
+- ✅ `allowVisitorUpload` column left in DB/types (stays false; harmless) — only the UI no longer references it.
+- ✅ Lint passes with 0 errors.
+- ⚠️ Pre-existing TS errors in AdminPanel.tsx (handleSyncDrive's `project.autoFilterEnabled` ref + `"30s"` interval comparison) NOT fixed — out of scope, were there before this task.
+- ⚠️ Card folder-count badge was intentionally NOT implemented (per task spec — would require N extra fetches); folder count is only visible inside the edit modal.

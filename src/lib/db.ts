@@ -135,38 +135,25 @@ export async function ensureSchema(): Promise<void> {
     // aiHidden: 0 = visible, 1 = hidden by AI filter (low quality)
     await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
 
-    // PendingUpload: visitor-uploaded photos awaiting admin review / Drive sync.
-    // Used as a fallback when no Google Service Account is configured, so the
-    // Upload Mandiri feature works immediately without any Google Cloud setup.
+    // ProjectFolder: additional Google Drive folders linked to a gallery beyond
+    // the primary one (Project.driveFolderId). Lets a manager add multiple
+    // photographer-contributed folders (each shared publicly by its owner) to a
+    // single galeri. Sync scans the primary folder + all additional folders and
+    // merges the photos (deduped by Drive file ID).
     await db.execute({
-      sql: `CREATE TABLE IF NOT EXISTS PendingUpload (
-  id          TEXT PRIMARY KEY,
-  projectId   TEXT NOT NULL,
-  fileName    TEXT NOT NULL,
-  mimeType    TEXT NOT NULL DEFAULT 'image/jpeg',
-  base64Data  TEXT NOT NULL,
-  size        INTEGER NOT NULL DEFAULT 0,
-  uploaderIp  TEXT NOT NULL DEFAULT '',
-  createdAt   TEXT NOT NULL,
+      sql: `CREATE TABLE IF NOT EXISTS ProjectFolder (
+  id             TEXT PRIMARY KEY,
+  projectId      TEXT NOT NULL,
+  driveFolderUrl TEXT NOT NULL,
+  driveFolderId  TEXT NOT NULL,
+  label          TEXT NOT NULL DEFAULT '',
+  addedBy        TEXT NOT NULL DEFAULT '',
+  addedAt        TEXT NOT NULL,
   FOREIGN KEY (projectId) REFERENCES Project(id) ON DELETE CASCADE
 )`,
     });
     await db.execute({
-      sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)`,
-    });
-
-    // Setting: app-wide key-value store for admin-configured settings.
-    // Used for the Google Service Account JSON key (so admins can configure it
-    // from the Settings tab without CLI access) and other future settings.
-    // NOTE: sensitive values (like the SA private key) are stored here. They
-    // are NEVER returned to the client in full — only non-sensitive metadata
-    // (e.g. client_email, configured status) is exposed via the API.
-    await db.execute({
-      sql: `CREATE TABLE IF NOT EXISTS Setting (
-  key       TEXT PRIMARY KEY,
-  value     TEXT NOT NULL,
-  updatedAt TEXT NOT NULL
-)`,
+      sql: `CREATE INDEX IF NOT EXISTS idx_projectfolder_projectId ON ProjectFolder(projectId)`,
     });
   })();
   // Set immediately so concurrent calls during the first run dedup to the

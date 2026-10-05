@@ -19,7 +19,6 @@ interface ShareModalProps {
     name: string;
     description?: string;
     displayMode?: "all" | "search";
-    allowVisitorUpload?: boolean;
   };
   onClose: () => void;
 }
@@ -67,13 +66,9 @@ export default function ShareModal({ project, onClose }: ShareModalProps) {
   };
 
   const shareUrl = `${getShareOrigin()}?gallery=${project.id}`;
-  const uploadUrl = `${getShareOrigin()}/upload?gallery=${project.id}`;
 
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
     shareUrl
-  )}&color=4c2a85&bgcolor=ffffff`;
-  const uploadQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-    uploadUrl
   )}&color=4c2a85&bgcolor=ffffff`;
 
   const handleCopy = async () => {
@@ -276,39 +271,6 @@ export default function ShareModal({ project, onClose }: ShareModalProps) {
               </span>
             </button>
           </div>
-
-          {/* QR Code Upload (second QR — for visitor upload) */}
-          {project.allowVisitorUpload && (
-            <div className="space-y-4 pt-4 border-t-2 border-dashed border-slate-300/60 flex flex-col items-center">
-              <div className="text-center">
-                <label className="block text-[11px] font-extrabold text-[#4C2A85] uppercase tracking-widest">
-                  QR Upload Foto
-                </label>
-                <p className="text-[10px] text-slate-400 mt-0.5">
-                  Pengunjung scan QR ini untuk mengupload foto ke galeri
-                  (maks 5 foto per sesi).
-                </p>
-              </div>
-
-              <div className="relative p-4 bg-white rounded-2xl shadow-md border border-slate-200 flex items-center justify-center transition-transform hover:scale-105">
-                <img
-                  src={uploadQrUrl}
-                  alt={`QR Upload ${project.name}`}
-                  className="w-44 h-44 pointer-events-none select-none"
-                />
-                <div className="absolute inset-0 border border-[#D4AF37]/10 rounded-2xl pointer-events-none" />
-              </div>
-
-              <a
-                href={uploadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-[#4C2A85] hover:underline font-mono break-all"
-              >
-                {uploadUrl}
-              </a>
-            </div>
-          )}
         </div>
       </motion.div>
     </motion.div>

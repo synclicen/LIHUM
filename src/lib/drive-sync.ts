@@ -18,6 +18,7 @@ export interface SyncResult {
   success: boolean;
   photoCount: number;
   foldersScanned: number;
+  driveFoldersCount?: number;
   maxDepthReached: number;
   nonImageFilesSkipped: number;
   foldersSkipped: number;
@@ -269,39 +270,85 @@ function filterPhotos(photos: RawPhoto[]): { kept: RawPhoto[]; stats: { smallFil
 }
 
 /**
- * Syncs a project's Google Drive folder into the database using the given
- * access token (either an admin OAuth token or a service account token).
+ * Syncs a project's Google Drive folder(s) into the database using the given
+ * admin OAuth access token.
+ *
+ * Scans the primary folder + all additional folders (passed in `folders`),
+ * merges the results, and dedupes photos by Drive file ID (so a photo that
+ * appears in multiple folders is only stored once).
  *
  * SAFETY GUARD: if the scan returns 0 photos, existing photos are NOT replaced.
  */
 export async function syncProjectWithToken(
   projectId: string,
-  token: string
+  token: string,
+  folders: { driveFolderId: string; driveFolderUrl: string; label: string }[]
 ): Promise<SyncResult> {
   const project = await findProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
-  const folderId = project.driveFolderId;
-  if (!folderId) {
+  if (folders.length === 0 || !folders[0].driveFolderId) {
     throw new Error("Drive folder ID tidak valid.");
   }
 
-  const scanResult = await listImagesRecursively(token, folderId);
-  const scanned = scanResult.results;
+  // Scan each folder and merge results. Photos are deduped by Drive file ID
+  // (a photo may legitimately appear in multiple folders if photographers
+  // share the same file across their folders).
+  const allResults: { file: any; parentName: string }[] = [];
+  const seenFileIds = new Set<string>();
+  const folderErrors: string[] = [];
+  let totalFoldersScanned = 0;
+  let totalMaxDepth = 0;
+  let totalNonImageSkipped = 0;
+  let totalFoldersSkipped = 0;
+  let rootStrategy: string | undefined;
+  let isSharedDrive = false;
+  let sharedDriveName: string | undefined;
+
+  for (let i = 0; i < folders.length; i++) {
+    const f = folders[i];
+    try {
+      const scanResult = await listImagesRecursively(token, f.driveFolderId);
+      totalFoldersScanned += scanResult.foldersScanned;
+      if (scanResult.maxDepthReached > totalMaxDepth) totalMaxDepth = scanResult.maxDepthReached;
+      totalNonImageSkipped += scanResult.nonImageFilesSkipped;
+      totalFoldersSkipped += scanResult.foldersSkipped;
+      if (i === 0) {
+        rootStrategy = scanResult.rootStrategy;
+        isSharedDrive = !!scanResult.isSharedDrive;
+        sharedDriveName = scanResult.sharedDriveName;
+      }
+      if (scanResult.rootFolderError && scanResult.results.length === 0) {
+        folderErrors.push(`${f.label}: ${scanResult.rootFolderError}`);
+      }
+      for (const r of scanResult.results) {
+        if (!seenFileIds.has(r.file.id)) {
+          seenFileIds.add(r.file.id);
+          allResults.push(r);
+        }
+      }
+    } catch (err: any) {
+      folderErrors.push(`${f.label}: ${err?.message || err}`);
+    }
+  }
+
+  const scanned = allResults;
 
   if (scanned.length === 0) {
     return {
       success: false,
       photoCount: 0,
-      foldersScanned: scanResult.foldersScanned,
-      maxDepthReached: scanResult.maxDepthReached,
-      nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
-      foldersSkipped: scanResult.foldersSkipped,
-      rootStrategy: scanResult.rootStrategy,
-      isSharedDrive: scanResult.isSharedDrive,
-      sharedDriveName: scanResult.sharedDriveName,
-      debug: scanResult.rootFolderError || "Scan mengembalikan 0 foto. Foto yang ada dipertahankan.",
+      foldersScanned: totalFoldersScanned,
+      maxDepthReached: totalMaxDepth,
+      nonImageFilesSkipped: totalNonImageSkipped,
+      foldersSkipped: totalFoldersSkipped,
+      rootStrategy,
+      isSharedDrive,
+      sharedDriveName,
+      debug: folderErrors.length > 0
+        ? `Tidak ada foto dari ${folders.length} folder. Errors: ${folderErrors.join("; ")}`
+        : "Scan mengembalikan 0 foto. Foto yang ada dipertahankan.",
       lastSyncedAt: new Date().toISOString(),
     };
   }
@@ -359,15 +406,16 @@ export async function syncProjectWithToken(
   return {
     success: true,
     photoCount: mappedPhotos.length,
-    foldersScanned: scanResult.foldersScanned,
-    maxDepthReached: scanResult.maxDepthReached,
-    nonImageFilesSkipped: scanResult.nonImageFilesSkipped,
-    foldersSkipped: scanResult.foldersSkipped,
-    rootStrategy: scanResult.rootStrategy,
-    isSharedDrive: scanResult.isSharedDrive,
-    sharedDriveName: scanResult.sharedDriveName,
+    foldersScanned: totalFoldersScanned,
+    driveFoldersCount: folders.length,
+    maxDepthReached: totalMaxDepth,
+    nonImageFilesSkipped: totalNonImageSkipped,
+    foldersSkipped: totalFoldersSkipped,
+    rootStrategy,
+    isSharedDrive,
+    sharedDriveName,
     filteredStats,
-    debug: scanResult.rootFolderError,
+    debug: folderErrors.length > 0 ? folderErrors.join("; ") : undefined,
     lastSyncedAt,
   };
 }

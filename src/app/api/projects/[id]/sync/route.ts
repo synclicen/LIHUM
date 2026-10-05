@@ -1,31 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSeed, getAccountRole } from "@/lib/lihum";
-import { findProjectById } from "@/lib/queries";
+import { findProjectById, getProjectFolders } from "@/lib/queries";
 import { syncProjectWithToken } from "@/lib/drive-sync";
-import {
-  getServiceAccount,
-  getServiceAccountAccessToken,
-  DRIVE_SCOPE,
-} from "@/lib/google-service-account";
 
-// POST /api/projects/:id/sync
-//
-// Scans the project's Google Drive folder and refreshes the Photo table.
-//
-// Token resolution (in priority order):
-//  1. Admin/manager's personal OAuth token (Authorization: Bearer …)
-//     — used when admin clicks "Sinkron" in the panel after logging in.
-//  2. Google Service Account token — used when GOOGLE_SERVICE_ACCOUNT is
-//     configured AND no admin token is provided (e.g. auto-sync triggered
-//     after a visitor upload). Requires the SA email to be an Editor on
-//     the folder.
-//
-// Authorization:
-//  - Admin OAuth token path: caller must be a registered admin/manager.
-//  - Service Account path: caller must pass `x-internal-sync: 1` header
-//    (set by the upload route's internal fetch) OR be a registered admin.
-//    This prevents anonymous users from forcing expensive Drive scans.
-
+// POST /api/projects/:id/sync — Admin/Manager only.
+// Scans the project's primary Google Drive folder + any additional linked
+// folders (from the ProjectFolder table) and refreshes the Photo table with
+// the merged, deduplicated set of images.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -33,10 +14,7 @@ export async function POST(
   await ensureSeed();
   const userEmail = req.headers.get("x-user-email") || undefined;
   const role = await getAccountRole(userEmail);
-  const internalHeader = req.headers.get("x-internal-sync");
-  const isInternal = internalHeader === "1";
-
-  if (!role && !isInternal) {
+  if (!role) {
     return NextResponse.json(
       { error: "Akses ditolak. Hubungi Admin Utama untuk didaftarkan." },
       { status: 403 }
@@ -45,44 +23,49 @@ export async function POST(
 
   const { id } = await params;
   const authHeader = req.headers.get("authorization");
-  const hasBearer = !!authHeader && authHeader.startsWith("Bearer ");
-  const sa = await getServiceAccount();
-
-  let token: string;
-  let tokenSource: string;
-
-  if (hasBearer) {
-    token = authHeader!.split(" ")[1];
-    tokenSource = "admin-oauth";
-  } else if (sa) {
-    try {
-      token = await getServiceAccountAccessToken(DRIVE_SCOPE);
-      tokenSource = "service-account";
-    } catch (err: any) {
-      return NextResponse.json(
-        { error: err?.message || "Gagal mendapatkan token service account." },
-        { status: 500 }
-      );
-    }
-  } else {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return NextResponse.json(
       {
         error:
-          "Token otorisasi Google tidak ditemukan. Silakan login Admin, atau konfigurasikan Service Account.",
+          "Token otorisasi Google tidak ditemukan. Silakan masuk (Login) Admin terlebih dahulu.",
       },
       { status: 401 }
     );
   }
+  const token = authHeader.split(" ")[1];
 
   const project = await findProjectById(id);
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  const folderId = project.driveFolderId;
+  if (!folderId) {
+    return NextResponse.json(
+      { error: "Format ID folder Google Drive tidak valid." },
+      { status: 400 }
+    );
+  }
+
+  // Collect all folders to scan: primary + any additional linked folders.
+  const additionalFolders = await getProjectFolders(id);
+  const allFolders = [
+    {
+      driveFolderId: folderId,
+      driveFolderUrl: project.driveFolderUrl,
+      label: "Folder Utama",
+    },
+    ...additionalFolders.map((f) => ({
+      driveFolderId: f.driveFolderId,
+      driveFolderUrl: f.driveFolderUrl,
+      label: f.label || "Folder Tambahan",
+    })),
+  ];
+
   try {
-    const result = await syncProjectWithToken(id, token);
+    const result = await syncProjectWithToken(id, token, allFolders);
     console.log(
-      `[Sync] Project ${id}: source=${tokenSource}, user=${userEmail || "internal"}, ${result.photoCount} photos, strategy="${result.rootStrategy}"`
+      `[Sync] Project ${id}: user=${userEmail}, ${result.photoCount} photos from ${allFolders.length} folder(s)`
     );
     return NextResponse.json(result);
   } catch (err: any) {
