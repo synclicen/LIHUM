@@ -583,3 +583,44 @@ Stage Summary:
 - ✅ Rate limited (15 foto/10min/IP), max 5 foto/sesi, auto-resize
 - ✅ Foto visitor disimpan untuk review admin (tidak langsung masuk galeri publik)
 - Workflow: manager enable Upload Mandiri per galeri → share QR upload → visitor scan → buka kamera → ambil/pilih foto → upload → admin review di tab Upload Mandiri → download + tambah manual ke Drive + sync, atau hapus/tolak
+
+---
+Task ID: 17-Camera-Preview
+Agent: subagent (Z.ai Code)
+Task: Add camera settings + live preview section to Upload Mandiri tab in AdminPanel.
+
+Work Log:
+- Read worklog entries for Task IDs 16 + 16-UploadMandiri-UI to understand the existing Upload Mandiri tab structure (header with total-pending + clear-all, then a 1/3 + 2/3 grid of per-gallery status + pending queue viewer).
+- Read AdminPanel.tsx head (imports, state, useEffects, handlers) and located the upload tab JSX (header at lines ~1577-1623, grid at ~1625).
+- Made 5 atomic edits via MultiEdit:
+  1. React import: added `useRef, useCallback` to the existing `useState, useEffect` import.
+  2. lucide-react imports: appended `Camera, X` to the existing list (after `Inbox`).
+  3. State: added 10 camera-related state vars + 2 refs (`previewVideoRef`, `previewStreamRef`) right after `togglingUploadId` state.
+  4. Handlers: added 5 camera handlers (`loadCameraDevices`, `startCameraPreview`, `stopCameraPreview`, `handleCaptureTestPhoto`, `handleSaveTestPhoto`) right after `handleToggleUpload`. All useCallback-wrapped except `handleSaveTestPhoto` (it needs to close over `loadPendingUploads` and is fine as a regular async fn).
+  5. JSX: inserted the camera section card (`bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-5 shadow-2xl`) between the upload-tab header (line ~1626 close) and the existing `grid grid-cols-1 lg:grid-cols-3 gap-8` div.
+- Initial TS check (`bun run tsc --noEmit`) flagged `TS2448 Block-scoped variable 'loadCameraDevices' used before its declaration` on the camera cleanup useEffect (which I had initially placed next to the other useEffects at the top of the component, BEFORE the `loadCameraDevices` useCallback declaration). Because `loadCameraDevices` is referenced in the useEffect's dep array (not just in the body), TS evaluates it at declaration time and it's in the temporal dead zone.
+- Fix: moved the camera cleanup useEffect to AFTER `handleSaveTestPhoto` (i.e., right after all camera handlers are declared). The "default target gallery" useEffect stayed at the top (it doesn't reference any camera handler, only `projects` state — safe).
+- Re-ran lint: 0 errors, 0 warnings. Re-ran tsc: the only remaining TS errors in AdminPanel.tsx are the 2 pre-existing ones noted in Task 16 worklog (line 748 `project.autoFilterEnabled` ref in `handleSyncDrive` — function takes `projectId` string; line 1634 `autoSyncInterval === "30s"` comparison — type doesn't include "30s"). Neither introduced by this task.
+- Did NOT touch any other file (no /upload page changes, no API changes, no ShareModal changes, no types changes).
+- All existing functionality (status per galeri toggle overview, pending queue viewer, per-gallery clear, global clear-all, badges on project cards, additional folders, folder-duplicate warning, stats) preserved untouched.
+
+Final structure of Upload Mandiri tab:
+  1. Status Alerts (errorMsg/successMsg) — existing
+  2. Header: total pending + reload + "Hapus Semua (Semua Galeri)" — existing
+  3. NEW Camera Settings & Live Preview card (line 1828):
+     * Left column: camera device dropdown (from `enumerateDevices` filtered to videoinput, auto-refresh after permission granted), Belakang/Depan facing-mode toggle buttons, resolution dropdown (HD/Full HD/4K), Mulai/Stop Preview button, permission/error box (handles NotAllowedError/NotFoundError/NotReadableError/OverconstrainedError with friendly Indonesian messages), info note about /upload page being the visitor path.
+     * Right column: live `<video>` preview with gold border, aspect-[4/3], LIVE badge overlay, placeholder when inactive, "Ambil Foto Tes" capture button (canvas.toDataURL, mirror if front camera, resize to max 1600px JPEG 0.82), captured-photo preview thumbnail, target gallery dropdown (defaults to first allowVisitorUpload gallery or first gallery), "Simpan ke Pending" button (POST /api/projects/[id]/visitor-upload), "Hapus" button (clears capturedTestPhoto).
+  4. Grid: Status per Galeri + Antrian Upload — existing
+
+Camera lifecycle: auto-stops when admin switches away from Upload tab or unmounts (useEffect cleanup stops all tracks + nulls stream ref). Auto-stops also when "Stop Preview" button is clicked.
+
+Stage Summary:
+- ✅ New "Pengaturan Kamera & Preview" section added to Upload Mandiri tab, placed ABOVE the existing status-per-gallery + pending-queue grid, BELOW the header.
+- ✅ Admin can select camera device, facing mode (environment/user), and resolution (HD/FHD/4K).
+- ✅ Live preview with start/stop, friendly Indonesian error messages for all common getUserMedia failures.
+- ✅ Capture test photo → select target gallery → save to pending queue (POST /api/projects/[id]/visitor-upload) → pending list auto-reloads → admin sees the test photo in the existing Antrian Upload Pengunjung grid below.
+- ✅ Camera auto-stops on tab switch / unmount (useEffect cleanup).
+- ✅ Capture mirrors front-camera, resizes to max 1600px, JPEG q=0.82 (matches the visitor /upload page pipeline).
+- ✅ Lint passes with 0 errors, 0 warnings.
+- ⚠️ 2 pre-existing TS errors in AdminPanel.tsx (handleSyncDrive project.autoFilterEnabled ref + "30s" interval comparison) NOT fixed — out of scope, present before this task.
+- File size: 2201 → 2639 lines (+438 added).

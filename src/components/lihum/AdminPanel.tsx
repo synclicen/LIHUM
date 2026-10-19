@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { ProjectSummary } from "@/types";
 import {
   FolderKanban,
@@ -30,6 +30,8 @@ import {
   Download,
   Clock,
   Inbox,
+  Camera,
+  X,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -111,6 +113,25 @@ export default function AdminPanel({
   const [clearingPending, setClearingPending] = useState(false);
   const [togglingUploadId, setTogglingUploadId] = useState<string | null>(null);
 
+  // ── Camera preview state (Upload Mandiri testing tool) ──
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [cameraFacing, setCameraFacing] = useState<"environment" | "user">(
+    "environment"
+  );
+  const [cameraResolution, setCameraResolution] = useState<string>("1280x720");
+  const [cameraPreviewActive, setCameraPreviewActive] = useState(false);
+  const [cameraPreviewError, setCameraPreviewError] = useState("");
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [capturedTestPhoto, setCapturedTestPhoto] = useState<string | null>(
+    null
+  ); // data URL
+  const [captureTargetGallery, setCaptureTargetGallery] = useState<string>("");
+  const [savingTestPhoto, setSavingTestPhoto] = useState(false);
+
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const previewStreamRef = useRef<MediaStream | null>(null);
+
   const resetForm = () => {
     setIsEditing(false);
     setEditingId(null);
@@ -185,6 +206,16 @@ export default function AdminPanel({
       loadPendingUploads();
     }
   }, []);
+
+  // Default target gallery for "save test photo" dropdown — prefer the first
+  // gallery with allowVisitorUpload enabled, otherwise fall back to the first
+  // gallery in the list.
+  useEffect(() => {
+    if (!captureTargetGallery && projects.length > 0) {
+      const firstEnabled = projects.find((p) => p.allowVisitorUpload);
+      setCaptureTargetGallery(firstEnabled?.id || projects[0]?.id || "");
+    }
+  }, [projects, captureTargetGallery]);
 
   // ── Additional Drive folders handlers (edit mode only) ──
   const loadAdditionalFolders = async (projectId: string) => {
@@ -404,6 +435,178 @@ export default function AdminPanel({
       setTogglingUploadId(null);
     }
   };
+
+  // ── Camera preview handlers (Upload Mandiri testing tool) ──
+  const loadCameraDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter((d) => d.kind === "videoinput");
+      setCameraDevices(videoInputs);
+      // Auto-select first device if none selected yet.
+      if (videoInputs.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(videoInputs[0].deviceId);
+      }
+      // Note: if labels are empty, we don't yet have permission — labels will
+      // populate after getUserMedia is called once.
+    } catch (err) {
+      console.warn("Failed to enumerate camera devices:", err);
+    }
+  }, [selectedDeviceId]);
+
+  const startCameraPreview = useCallback(async () => {
+    setCameraPreviewError("");
+    setCameraStarting(true);
+    // Stop existing stream
+    if (previewStreamRef.current) {
+      previewStreamRef.current.getTracks().forEach((t) => t.stop());
+      previewStreamRef.current = null;
+    }
+    try {
+      const [w, h] = cameraResolution.split("x").map(Number);
+      const constraints: MediaStreamConstraints = {
+        video: selectedDeviceId
+          ? {
+              deviceId: { exact: selectedDeviceId },
+              width: { ideal: w },
+              height: { ideal: h },
+            }
+          : {
+              facingMode: { ideal: cameraFacing },
+              width: { ideal: w },
+              height: { ideal: h },
+            },
+        audio: false,
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      previewStreamRef.current = stream;
+      if (previewVideoRef.current) {
+        previewVideoRef.current.srcObject = stream;
+        await previewVideoRef.current.play().catch(() => {});
+      }
+      setCameraPreviewActive(true);
+      // Refresh device list now that we have permission (labels populate).
+      loadCameraDevices();
+    } catch (err: any) {
+      let msg = "Gagal mengakses kamera.";
+      if (err?.name === "NotAllowedError")
+        msg =
+          "Izin kamera ditolak. Aktifkan izin kamera di browser, lalu coba lagi.";
+      else if (err?.name === "NotFoundError")
+        msg = "Kamera tidak ditemukan di perangkat ini.";
+      else if (err?.name === "NotReadableError")
+        msg =
+          "Kamera sedang dipakai aplikasi lain. Tutup aplikasi tersebut lalu coba lagi.";
+      else if (err?.name === "OverconstrainedError")
+        msg =
+          "Kombinasi pengaturan kamera tidak didukung perangkat ini. Coba resolusi atau kamera lain.";
+      setCameraPreviewError(msg);
+      setCameraPreviewActive(false);
+    } finally {
+      setCameraStarting(false);
+    }
+  }, [selectedDeviceId, cameraFacing, cameraResolution, loadCameraDevices]);
+
+  const stopCameraPreview = useCallback(() => {
+    if (previewStreamRef.current) {
+      previewStreamRef.current.getTracks().forEach((t) => t.stop());
+      previewStreamRef.current = null;
+    }
+    if (previewVideoRef.current) {
+      previewVideoRef.current.srcObject = null;
+    }
+    setCameraPreviewActive(false);
+  }, []);
+
+  const handleCaptureTestPhoto = useCallback(() => {
+    if (!previewVideoRef.current) return;
+    const video = previewVideoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Mirror if front camera
+    if (cameraFacing === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
+    // Resize to max 1600px on the long edge
+    let { width, height } = canvas;
+    const MAX = 1600;
+    if (width > MAX || height > MAX) {
+      if (width >= height) {
+        height = Math.round((height * MAX) / width);
+        width = MAX;
+      } else {
+        width = Math.round((width * MAX) / height);
+        height = MAX;
+      }
+    }
+    const resized = document.createElement("canvas");
+    resized.width = width;
+    resized.height = height;
+    resized.getContext("2d")!.drawImage(canvas, 0, 0, width, height);
+    const dataUrl = resized.toDataURL("image/jpeg", 0.82);
+    setCapturedTestPhoto(dataUrl);
+  }, [cameraFacing]);
+
+  const handleSaveTestPhoto = async () => {
+    if (!capturedTestPhoto || !captureTargetGallery) {
+      setErrorMsg("Pilih galeri target terlebih dahulu.");
+      return;
+    }
+    setSavingTestPhoto(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const base64Data = capturedTestPhoto.split(",")[1] || "";
+      const res = await fetch(
+        `/api/projects/${captureTargetGallery}/visitor-upload`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            photos: [
+              {
+                base64Data,
+                mimeType: "image/jpeg",
+                fileName: `admin-test-${Date.now()}.jpg`,
+              },
+            ],
+          }),
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        setSuccessMsg(data.message || "Foto tes tersimpan ke antrian pending.");
+        setCapturedTestPhoto(null);
+        loadPendingUploads();
+        setTimeout(() => setSuccessMsg(""), 3000);
+      } else {
+        setErrorMsg(data.error || "Gagal menyimpan foto tes.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal terhubung ke server.");
+    } finally {
+      setSavingTestPhoto(false);
+    }
+  };
+
+  // ── Camera preview lifecycle (Upload Mandiri testing tool) ──
+  // Load device list when entering the upload tab; stop camera when leaving
+  // the upload tab or when the component unmounts.
+  useEffect(() => {
+    if (activeTab === "upload") {
+      loadCameraDevices();
+    }
+    return () => {
+      if (previewStreamRef.current) {
+        previewStreamRef.current.getTracks().forEach((t) => t.stop());
+        previewStreamRef.current = null;
+      }
+    };
+  }, [activeTab, loadCameraDevices]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1619,6 +1822,242 @@ export default function AdminPanel({
                 )}
                 <span>Hapus Semua (Semua Galeri)</span>
               </button>
+            </div>
+          </div>
+
+          {/* Camera Settings & Live Preview — admin testing tool */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center space-x-2.5 mb-4 pb-3 border-b border-violet-900/30">
+              <Camera className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-xs font-serif font-bold text-white uppercase tracking-wider">
+                Pengaturan Kamera & Preview
+              </h3>
+              <span className="ml-auto text-[9px] text-slate-500">
+                Tes kamera untuk Upload Mandiri
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left: Settings */}
+              <div className="space-y-3">
+                {/* Device selector */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Kamera
+                  </label>
+                  <select
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                    disabled={cameraPreviewActive}
+                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"
+                  >
+                    {cameraDevices.length === 0 ? (
+                      <option value="">Memuat daftar kamera...</option>
+                    ) : (
+                      cameraDevices.map((d, i) => (
+                        <option key={d.deviceId || i} value={d.deviceId}>
+                          {d.label || `Kamera ${i + 1}`}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {/* Facing mode toggle */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Orientasi
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCameraFacing("environment")}
+                      disabled={cameraPreviewActive}
+                      className={`py-2 rounded-xl text-[10px] font-bold border transition-all disabled:opacity-50 ${
+                        cameraFacing === "environment"
+                          ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                          : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950"
+                      }`}
+                    >
+                      Belakang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCameraFacing("user")}
+                      disabled={cameraPreviewActive}
+                      className={`py-2 rounded-xl text-[10px] font-bold border transition-all disabled:opacity-50 ${
+                        cameraFacing === "user"
+                          ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                          : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950"
+                      }`}
+                    >
+                      Depan (Selfie)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Resolution */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Resolusi
+                  </label>
+                  <select
+                    value={cameraResolution}
+                    onChange={(e) => setCameraResolution(e.target.value)}
+                    disabled={cameraPreviewActive}
+                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"
+                  >
+                    <option value="1280x720">HD (1280×720)</option>
+                    <option value="1920x1080">Full HD (1920×1080)</option>
+                    <option value="3840x2160">4K (3840×2160)</option>
+                  </select>
+                </div>
+
+                {/* Start/Stop button */}
+                <button
+                  type="button"
+                  onClick={
+                    cameraPreviewActive ? stopCameraPreview : startCameraPreview
+                  }
+                  disabled={cameraStarting}
+                  className={`w-full py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 ${
+                    cameraPreviewActive
+                      ? "bg-red-950/40 border border-red-700/50 text-red-300 hover:bg-red-900/50"
+                      : "bg-[#D4AF37] text-[#4C2A85] hover:bg-[#dfbb66]"
+                  }`}
+                >
+                  {cameraStarting ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : cameraPreviewActive ? (
+                    <X className="w-3.5 h-3.5" />
+                  ) : (
+                    <Camera className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {cameraStarting
+                      ? "Memulai..."
+                      : cameraPreviewActive
+                      ? "Stop Preview"
+                      : "Mulai Preview"}
+                  </span>
+                </button>
+
+                {/* Permission/error */}
+                {cameraPreviewError && (
+                  <div className="flex items-start gap-2 p-2.5 bg-red-500/10 border border-red-500/25 text-red-300 rounded-lg text-[10px]">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{cameraPreviewError}</span>
+                  </div>
+                )}
+
+                {/* Info */}
+                <p className="text-[9px] text-slate-500 leading-relaxed bg-[#1F0F3D]/30 rounded-md px-2.5 py-1.5">
+                  Preview ini untuk menguji kamera. Pengunjung menggunakan kamera
+                  via halaman /upload (QR code upload).
+                </p>
+              </div>
+
+              {/* Right: Live preview */}
+              <div className="space-y-3">
+                <div className="relative rounded-xl overflow-hidden bg-black aspect-[4/3] border-2 border-[#D4AF37]/30">
+                  <video
+                    ref={previewVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                    style={{
+                      transform:
+                        cameraFacing === "user" && cameraPreviewActive
+                          ? "scaleX(-1)"
+                          : "none",
+                    }}
+                  />
+                  {!cameraPreviewActive && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                      <Camera className="w-10 h-10 mb-2 opacity-30" />
+                      <p className="text-[10px]">Kamera belum aktif</p>
+                      <p className="text-[9px] text-slate-600">
+                        Klik "Mulai Preview"
+                      </p>
+                    </div>
+                  )}
+                  {cameraPreviewActive && (
+                    <div className="absolute top-2 left-2 bg-red-500/80 text-white text-[8px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                      <span className="w-1.5 h-1.5 bg-white rounded-full" />
+                      LIVE
+                    </div>
+                  )}
+                </div>
+
+                {/* Capture + save */}
+                {cameraPreviewActive && (
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={handleCaptureTestPhoto}
+                      className="w-full py-2 rounded-lg bg-[#4C2A85] border border-[#D4AF37]/35 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-[#5a329d] transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      Ambil Foto Tes
+                    </button>
+                  </div>
+                )}
+
+                {/* Captured test photo */}
+                {capturedTestPhoto && (
+                  <div className="space-y-2 p-2.5 bg-[#1F0F3D]/40 rounded-lg border border-violet-950/60">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      Foto Tes:
+                    </p>
+                    <img
+                      src={capturedTestPhoto}
+                      alt="Test capture"
+                      className="w-full rounded-lg max-h-40 object-cover"
+                    />
+                    <div>
+                      <label className="block text-[9px] text-slate-500 mb-1">
+                        Simpan ke galeri:
+                      </label>
+                      <select
+                        value={captureTargetGallery}
+                        onChange={(e) =>
+                          setCaptureTargetGallery(e.target.value)
+                        }
+                        className="w-full bg-[#0C061A]/60 border border-violet-950 rounded-md px-2 py-1.5 text-[10px] text-white focus:outline-none focus:border-[#D4AF37]"
+                      >
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveTestPhoto}
+                        disabled={savingTestPhoto || !captureTargetGallery}
+                        className="flex-1 py-1.5 rounded-lg bg-[#D4AF37] text-[#4C2A85] text-[10px] font-bold uppercase tracking-wider hover:bg-[#dfbb66] transition-all disabled:opacity-50 flex items-center justify-center gap-1"
+                      >
+                        {savingTestPhoto ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        Simpan ke Pending
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCapturedTestPhoto(null)}
+                        className="px-2.5 py-1.5 rounded-lg border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-500/10 transition-all"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
