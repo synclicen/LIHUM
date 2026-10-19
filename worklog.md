@@ -505,3 +505,44 @@ Stage Summary:
 - ⚠️ Estimasi ini kasar (over-count karena polling admin ikut terhitung, distribusi download proporsional bukan aktual per galeri). Akurasi ±30%.
 - ⚠️ Hanya 30 hari terakhir yang di-backfill (limit Cloudflare free plan). Traffic sebelum 5 Sep 2026 tidak tercakup.
 - Catatan: script scripts/backfill-stats.ts bisa dijalankan ulang kapan saja jika perlu re-estimasi (butuh CLOUDFLARE_API_TOKEN + DATABASE_URL + TURSO_AUTH_TOKEN env vars).
+
+---
+Task ID: 16-UploadMandiri-UI
+Agent: subagent (Z.ai Code)
+Task: Add Upload Mandiri tab to AdminPanel + per-gallery toggle + pending uploads viewer + ShareModal second QR.
+
+Work Log:
+- Read worklog entries for Task IDs 12, 14, 15 (and 11) to understand prior cleanup of Upload Mandiri + Settings tab, current stats feature, and folder-duplicate warning.
+- Read both target files in full: ShareModal.tsx (278 lines) and AdminPanel.tsx (1608 lines).
+- Verified backend already in place: PendingUpload table + CRUD in queries.ts, GET/POST /api/projects/[id]/visitor-upload, GET/DELETE /api/admin/pending-uploads (with optional ?projectId), GET/DELETE /api/admin/pending-uploads/[id] (download via ?admin= query param so it works as <img src> + <a href> without custom headers). allowVisitorUpload column already on Project + ProjectSummary types.
+- ShareModal.tsx changes:
+  * Added `allowVisitorUpload?: boolean` to ShareModalProps.project interface.
+  * Added `uploadUrl` (`${getShareOrigin()}/upload?gallery=${project.id}`) and `uploadQrUrl` (qrserver.com, same purple/gold params as the existing view-QR) next to existing `qrUrl`.
+  * Added second QR section AFTER the "Download QR Lihat & Unduh" button, BEFORE the closing of the modal body, with dashed top separator. Renders only when `project.allowVisitorUpload` is truthy. Includes label "QR Upload Foto", caption about max 5 photos per session, the QR <img>, the upload link as a clickable <a target="_blank">, all styled consistently with the existing QR block.
+- AdminPanel.tsx changes (1608 → 2201 lines, ~593 added):
+  * Imports: added `CloudUpload`, `Download`, `Clock`, `Inbox` to lucide-react imports.
+  * `activeTab` type narrowed: `"projects" | "accounts"` → `"projects" | "accounts" | "upload"`.
+  * Added 7 state vars: `allowVisitorUpload`, `pendingUploads`, `pendingCounts`, `loadingPending`, `deletingPendingId`, `clearingPending`, `togglingUploadId`.
+  * Added 5 handlers: `loadPendingUploads()` (GET /api/admin/pending-uploads with x-user-email header, populates pendingUploads + pendingCounts from response.uploads + response.counts), `handleDeletePending(id)` (DELETE single), `handleClearPending(projectId)` (DELETE all for one gallery via ?projectId=), `handleClearAllPending()` (iterates galleries with pending > 0, deletes each, reports totalDeleted + failedGalleries count), `handleToggleUpload(projectId, current)` (PUT /api/projects/[id] with {allowVisitorUpload: !current}, refreshes projects + pending list).
+  * `resetForm`: now also sets `setAllowVisitorUpload(false)`.
+  * `handleEditClick`: now also sets `setAllowVisitorUpload(!!project.allowVisitorUpload)`.
+  * `handleSubmit`: PUT/POST body now includes `allowVisitorUpload`.
+  * Tab-change useEffect: added branch `if (activeTab === "upload" && userRole === "admin") loadPendingUploads();`.
+  * Added mount useEffect: admin-only one-shot `loadPendingUploads()` so project cards can display pending badges immediately without admin having to open the Upload tab.
+  * Gallery edit form: added new "Upload Mandiri Pengunjung" section BETWEEN the password (private visibility) section and the "Sumber Folder Tambahan" section. Toggle switch (same peer-based styling as autoFilterEnabled/autoSyncEnabled toggles). When ON, shows info box: "Pengunjung dapat mengupload foto ke galeri via QR code upload. Maksimal 5 foto per sesi. Foto disimpan untuk ditinjau admin sebelum ditambahkan ke galeri." Plus, in edit mode, a hint linking the admin to the new Upload Mandiri tab + Share modal.
+  * Added third tab button "Upload Mandiri" after the accounts tab, with CloudUpload icon (amber). Admin-only (the tab bar itself is already admin-only). Shows pending count in parens, "..." while loading.
+  * Added upload-tab content as a new branch in the conditional render (`activeTab === "upload" ? (...) : (...)` nested ternary). Layout: 1/3 + 2/3 grid. Left column = "Status per Galeri" compact list of every gallery with On/Off badge, pending count badge, and an inline Aktifkan/Nonaktifkan button (calls handleToggleUpload). Right column = "Antrian Upload Pengunjung" — header with total count + reload button + "Hapus Semua (Semua Galeri)" button (calls handleClearAllPending, disabled when 0 pending). Body shows pending uploads GROUPED by projectId (each group has its own sub-header with gallery name, count, and per-gallery "Hapus Semua" button). Each pending photo row: thumbnail (img src = /api/admin/pending-uploads/[id]?admin=<email> — browsers display attachment images inline in <img> tags), clickable to open raw image in new tab; filename + size KB + uploader IP + createdAt with clock icon; Download button (anchor with download src); Delete button (calls handleDeletePending, spinner while deleting). Empty state shows Inbox icon + helpful hint.
+  * Added two new badges on project cards in the projects grid: (1) "Upload" badge with CloudUpload icon (purple/gold style, shown when project.allowVisitorUpload is true), and (2) "N Pending" amber badge with Inbox icon (shown when pendingCounts[project.id] > 0).
+  * Preserved folder-duplicate warning (Task 11), "Sumber Folder Tambahan" section (Task 12), and stats display in GalleryView (Task 14) — none touched.
+- Lint: `bun run lint` → 0 errors, 0 warnings. (Removed two eslint-disable directives I had initially added — both were flagged as "Unused eslint-disable directive" because react-hooks/exhaustive-deps and @next/next/no-img-element are turned OFF in eslint.config.mjs, so the directives weren't suppressing anything.)
+- TypeScript: `bun run tsc --noEmit` shows the same 2 pre-existing errors in AdminPanel.tsx noted in Task 12 worklog — `handleSyncDrive`'s `project.autoFilterEnabled` reference at line 545 (function only takes projectId string) and `autoSyncInterval === "30s"` comparison at line 1431 (type doesn't include "30s"). Neither was introduced by this task — both pre-exist. The other TS errors in unrelated files (ai-score, settings/service-account, GalleryView photoCount, seed.ts NewProjectInput) also all pre-exist and are out of scope.
+
+Stage Summary:
+- ✅ ShareModal: second QR (QR Upload Foto) added below the view/download QR, shown ONLY when project.allowVisitorUpload is true, with dashed separator + caption + clickable upload link.
+- ✅ AdminPanel: third "Upload Mandiri" tab added (admin only) with full pending-uploads viewer (grouped by gallery, thumbnail/size/IP/timestamp/download/delete per row, per-gallery "Hapus Semua", global "Hapus Semua (Semua Galeri)") + compact per-gallery toggle overview (On/Off + pending badge + quick Aktifkan/Nonaktifkan button).
+- ✅ Per-gallery "Upload Mandiri Pengunjung" toggle added to gallery edit form (between visibility/password section and Additional Drive Folders section). Toggle + info box + (edit mode) hint linking to Upload Mandiri tab + Share modal. Wired into handleSubmit/handleEditClick/resetForm.
+- ✅ Project cards now show "Upload" badge (when allowVisitorUpload) and "N Pending" amber badge (when pendingCount > 0).
+- ✅ Folder-duplicate warning (Task 11), Additional Drive Folders section (Task 12), stats badges (Task 14) all preserved untouched.
+- ✅ Lint passes with 0 errors, 0 warnings.
+- ⚠️ Pre-existing TS errors in AdminPanel.tsx (handleSyncDrive project.autoFilterEnabled ref + "30s" interval comparison) NOT fixed — out of scope, present before this task.
+- ⚠️ Pending uploads are read-only here (download/delete). Actual import-into-gallery flow (move pending → Photo table) is NOT part of this task and not yet implemented. Backend endpoints only handle pending queue + download/delete; admin must still download a photo manually and re-upload via Drive sync if they want it in the gallery.
