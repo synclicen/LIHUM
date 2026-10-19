@@ -546,3 +546,40 @@ Stage Summary:
 - ✅ Lint passes with 0 errors, 0 warnings.
 - ⚠️ Pre-existing TS errors in AdminPanel.tsx (handleSyncDrive project.autoFilterEnabled ref + "30s" interval comparison) NOT fixed — out of scope, present before this task.
 - ⚠️ Pending uploads are read-only here (download/delete). Actual import-into-gallery flow (move pending → Photo table) is NOT part of this task and not yet implemented. Backend endpoints only handle pending queue + download/delete; admin must still download a photo manually and re-upload via Drive sync if they want it in the gallery.
+
+---
+Task ID: 16
+Agent: main (Z.ai Code) + subagent (Task 16-UploadMandiri-UI)
+Task: Matangkan fitur Upload Mandiri Pengunjung: tab admin khusus, kamera matang via QR/link, toggle per galeri.
+
+Work Log:
+- Re-add tabel PendingUpload ke db.ts (id, projectId, fileName, mimeType, base64Data, size, uploaderIp, createdAt + index). Kolom allowVisitorUpload sudah ada di Project (backward compat dari Task 13).
+- CRUD pending uploads di queries.ts: addPendingUpload, getPendingUploads, countPendingUploads, countAllPendingUploads, getAllPendingUploads, findPendingUpload, deletePendingUpload, deletePendingUploadsForProject.
+- API routes:
+  * GET/POST /api/projects/[id]/visitor-upload (public, rate-limited 15 foto/10min/IP, max 5/request)
+  * GET /api/admin/pending-uploads?projectId=X (admin, list all grouped)
+  * GET /api/admin/pending-uploads/[id]?admin=email (admin, download photo)
+  * DELETE /api/admin/pending-uploads/[id] (admin, delete one)
+  * DELETE /api/admin/pending-uploads?projectId=X (admin, clear all for gallery)
+- Halaman /upload dengan kamera matang: live viewfinder (getUserMedia, facingMode environment/user), tombol capture besar, switch kamera, file picker fallback, preview grid dengan delete, client-side resize (max 1600px JPEG 0.82), upload button, success/error states, permission error handling, mobile-first.
+- Subagent built AdminPanel + ShareModal UI:
+  * Tab "Upload Mandiri" (3rd tab, admin only): status per galeri dengan quick toggle + antrian upload pengunjung (grouped by gallery, thumbnail, download, delete, hapus semua per galeri / global)
+  * Toggle "Upload Mandiri Pengunjung" per galeri di form edit
+  * Badge "Upload" + badge pending count di project cards
+  * ShareModal: second QR code saat allowVisitorUpload aktif
+- Fixed build error: deleted stale files (src/app/api/settings/, src/lib/google-service-account.ts, src/app/api/pending-uploads/, src/app/api/projects/[id]/pending-uploads/) yang import dari module yang sudah dihapus di Task 13. File-file ini tidak terhapus dari disk saat git rm, jadi ter-include lagi saat git add -A.
+- Lint: 0 errors, 0 warnings.
+- Local test: upload photo via API → stored → admin list → download (valid JPEG) → auth guard (403 non-admin) → delete → cleanup. All pass.
+- Agent Browser: home page + /upload page render clean, zero errors.
+- Built + deployed via GitHub Actions CI/CD (run #39266128504, success).
+- Production verified: home HTTP 200 (0.4s), /upload HTTP 200, visitor-upload endpoint returns {allowVisitorUpload:false, pendingCount:0}, admin pending-uploads HTTP 200 (admin) / 403 (non-admin).
+
+Stage Summary:
+- ✅ Fitur Upload Mandiri Pengunjung live di produksi (commit b713d66)
+- ✅ Tab "Upload Mandiri" khusus admin (3rd tab) dengan: status per galeri + quick toggle + antrian upload (grouped, thumbnail, download, delete)
+- ✅ Kamera matang di /upload page: live viewfinder, capture, switch camera, file picker, resize, preview, upload
+- ✅ Toggle per galeri di form edit + badge di project cards
+- ✅ ShareModal: second QR untuk upload saat allowVisitorUpload aktif
+- ✅ Rate limited (15 foto/10min/IP), max 5 foto/sesi, auto-resize
+- ✅ Foto visitor disimpan untuk review admin (tidak langsung masuk galeri publik)
+- Workflow: manager enable Upload Mandiri per galeri → share QR upload → visitor scan → buka kamera → ambil/pilih foto → upload → admin review di tab Upload Mandiri → download + tambah manual ke Drive + sync, atau hapus/tolak
