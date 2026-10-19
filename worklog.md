@@ -624,3 +624,38 @@ Stage Summary:
 - ✅ Lint passes with 0 errors, 0 warnings.
 - ⚠️ 2 pre-existing TS errors in AdminPanel.tsx (handleSyncDrive project.autoFilterEnabled ref + "30s" interval comparison) NOT fixed — out of scope, present before this task.
 - File size: 2201 → 2639 lines (+438 added).
+
+---
+Task ID: 17
+Agent: main (Z.ai Code) + subagent (Task 17-Camera-Preview)
+Task: Tambah setting kamera + live preview di tab Upload Mandiri (admin panel).
+
+Work Log:
+- Subagent menambah section "Pengaturan Kamera & Preview" di AdminPanel.tsx (admin only, di tab Upload Mandiri, antara header dan grid status/pending).
+- Setting kamera (left column):
+  * Dropdown pilih kamera (enumerateDevices, daftar semua videoinput, auto-select first)
+  * Toggle orientasi: Belakang (environment) / Depan (selfie/user)
+  * Dropdown resolusi: HD 720p / Full HD 1080p / 4K
+  * Tombol Mulai/Stop Preview (getUserMedia dengan constraints deviceId/facingMode + ideal resolution)
+  * Error handling: NotAllowedError → "Izin ditolak", NotFoundError → "Kamera tidak ditemukan", NotReadableError → "dipakai aplikasi lain", OverconstrainedError → "kombinasi tidak didukung"
+  * Info note: preview untuk testing, pengunjung pakai /upload via QR
+- Live preview (right column):
+  * <video> element dengan gold border, aspect 4/3, object-cover
+  * Badge "LIVE" merah berdenyut saat aktif
+  * Mirror (scaleX(-1)) saat front camera
+  * Placeholder "Kamera belum aktif" saat inactive
+  * Tombol "Ambil Foto Tes" → capture frame via canvas, resize max 1600px, JPEG 0.82
+  * Preview foto tes + dropdown pilih galeri target + "Simpan ke Pending" (POST /api/projects/[id]/visitor-upload) + tombol hapus
+  * Saat simpan sukses → reload pending uploads → foto tes muncul di antrian pending
+- Cleanup: camera auto-stop saat pindah tab atau unmount (useEffect return).
+- Lint: 0 errors, 0 warnings.
+- Build + deploy via GitHub Actions CI/CD (run #39274982093, success, commit a9a0fb3).
+- Production verified: home HTTP 200 (0.45s), /upload HTTP 200, zero errors.
+
+Stage Summary:
+- ✅ Setting kamera + live preview live di produksi (commit a9a0fb3)
+- ✅ Admin bisa: pilih kamera → pilih orientasi → pilih resolusi → mulai preview → lihat live feed → ambil foto tes → simpan ke pending galeri tertentu
+- ✅ Error handling lengkap (permission, not found, in-use, overconstrained)
+- ✅ Camera auto-stop saat pindah tab (no resource leak)
+- ✅ Test photo masuk ke antrian pending (bisa di-download/hapus seperti foto visitor lain)
+- Workflow: admin buka tab Upload Mandiri → section Pengaturan Kamera → tes kamera → capture → simpan ke pending galeri → verifikasi di antrian. Pengunjung tetap pakai /upload via QR (tidak terpengaruh).
