@@ -788,3 +788,69 @@ export async function createAccounts(accounts: NewAccountInput[]): Promise<void>
 
 // Convenience export for routes that need the boolean coercion helper.
 export const toBool = bool;
+
+// ---------- Settings (global app-wide key-value store) ----------
+export async function getSetting(key: string): Promise<string | null> {
+  const r = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [key],
+  });
+  if (r.rows.length === 0) return null;
+  return String((r.rows[0] as Record<string, unknown>).value);
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+    args: [key, value, new Date().toISOString()],
+  });
+}
+
+// ---------- Camera Global Config (stored as a single JSON Setting) ----------
+export interface CameraConfig {
+  filter: string;
+  aspectRatio: string;
+  resolution: string;
+  countdown: number;
+  mirror: boolean;
+  facing: "environment" | "user";
+  maxPhotos: number;
+}
+
+const CAMERA_CONFIG_KEY = "camera_config_global";
+const DEFAULT_CAMERA_CONFIG: CameraConfig = {
+  filter: "original",
+  aspectRatio: "4:3",
+  resolution: "1920x1080",
+  countdown: 3,
+  mirror: true,
+  facing: "environment",
+  maxPhotos: 5,
+};
+
+export async function getCameraConfig(): Promise<CameraConfig> {
+  const json = await getSetting(CAMERA_CONFIG_KEY);
+  if (!json) return DEFAULT_CAMERA_CONFIG;
+  try {
+    const parsed = JSON.parse(json);
+    return { ...DEFAULT_CAMERA_CONFIG, ...parsed };
+  } catch {
+    return DEFAULT_CAMERA_CONFIG;
+  }
+}
+
+export async function setCameraConfig(config: CameraConfig): Promise<void> {
+  await setSetting(
+    CAMERA_CONFIG_KEY,
+    JSON.stringify({
+      filter: config.filter || "original",
+      aspectRatio: config.aspectRatio || "4:3",
+      resolution: config.resolution || "1920x1080",
+      countdown: typeof config.countdown === "number" ? config.countdown : 3,
+      mirror: !!config.mirror,
+      facing: config.facing === "user" ? "user" : "environment",
+      maxPhotos: typeof config.maxPhotos === "number" && config.maxPhotos > 0 ? Math.min(config.maxPhotos, 20) : 5,
+    })
+  );
+}

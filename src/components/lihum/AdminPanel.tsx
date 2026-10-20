@@ -106,6 +106,15 @@ export default function AdminPanel({
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
 
+  // ── Global camera config (applies to ALL galeri with allowVisitorUpload) ──
+  const [cameraFilter, setCameraFilter] = useState("original");
+  const [cameraAspectRatio, setCameraAspectRatio] = useState("4:3");
+  const [cameraCountdown, setCameraCountdown] = useState(3);
+  const [cameraMirror, setCameraMirror] = useState(true);
+  const [cameraMaxPhotos, setCameraMaxPhotos] = useState(5);
+  const [loadingCameraConfig, setLoadingCameraConfig] = useState(false);
+  const [savingCameraConfig, setSavingCameraConfig] = useState(false);
+
   // ── Camera preview state (Upload Mandiri testing tool) ──
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
@@ -188,8 +197,63 @@ export default function AdminPanel({
       loadAccounts();
     }
     if (activeTab === "upload" && userRole === "admin") {
+      loadCameraConfig();
     }
   }, [activeTab, userRole]);
+
+  // ── Global camera config handlers ──
+  const loadCameraConfig = async () => {
+    setLoadingCameraConfig(true);
+    try {
+      const res = await fetch("/api/admin/camera-config", {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) throw new Error("Gagal memuat pengaturan kamera.");
+      const data = await res.json();
+      setCameraFilter(data.filter || "original");
+      setCameraAspectRatio(data.aspectRatio || "4:3");
+      setCameraCountdown(typeof data.countdown === "number" ? data.countdown : 3);
+      setCameraMirror(data.mirror !== false);
+      setCameraMaxPhotos(typeof data.maxPhotos === "number" && data.maxPhotos > 0 ? data.maxPhotos : 5);
+      if (data.resolution) setCameraResolution(data.resolution);
+      if (data.facing) setCameraFacing(data.facing);
+    } catch {
+      /* non-critical, defaults used */
+    } finally {
+      setLoadingCameraConfig(false);
+    }
+  };
+
+  const handleSaveCameraConfig = async () => {
+    setSavingCameraConfig(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/admin/camera-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-user-email": userEmail },
+        body: JSON.stringify({
+          filter: cameraFilter,
+          aspectRatio: cameraAspectRatio,
+          resolution: cameraResolution,
+          countdown: cameraCountdown,
+          mirror: cameraMirror,
+          facing: cameraFacing,
+          maxPhotos: cameraMaxPhotos,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Gagal menyimpan pengaturan kamera.");
+      }
+      setSuccessMsg(data.message || "Pengaturan kamera global disimpan.");
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menyimpan pengaturan kamera.");
+    } finally {
+      setSavingCameraConfig(false);
+    }
+  };
 
   // Load pending counts once on mount (admin only) so project cards can show
   // their pending badge without the admin needing to visit the Upload tab.
@@ -1595,6 +1659,161 @@ export default function AdminPanel({
             </div>
           )}
 
+          {/* Global Camera Config — applies to ALL galeri with allowVisitorUpload */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/30 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center space-x-2.5 mb-4 pb-3 border-b border-violet-900/30">
+              <Sparkles className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-xs font-serif font-bold text-white uppercase tracking-wider">
+                Pengaturan Kamera Default
+              </h3>
+              <span className="ml-auto text-[9px] text-slate-500">
+                Berlaku untuk semua galeri
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 leading-relaxed mb-4">
+              Setelan default kamera yang akan dipakai pengunjung di halaman
+              /upload. Perubahan filter, aspek rasio, dan mirror langsung
+              tampil di live preview di bawah. Klik Simpan untuk menerapkan ke
+              semua galeri.
+            </p>
+
+            {loadingCameraConfig ? (
+              <div className="flex items-center gap-2 text-[10px] text-slate-400 py-4">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Memuat pengaturan...
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                {/* Filter default */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Filter Default
+                  </label>
+                  <select
+                    value={cameraFilter}
+                    onChange={(e) => setCameraFilter(e.target.value)}
+                    className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-[#D4AF37]"
+                  >
+                    <option value="original">Original</option>
+                    <option value="purple-haze">Purple Haze</option>
+                    <option value="vintage">Vintage</option>
+                    <option value="noir">Noir B&amp;W</option>
+                    <option value="cool-blue">Cool Blue</option>
+                    <option value="warm-sunset">Warm Sunset</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="vintage-film">Vintage Film</option>
+                    <option value="neon-pulse">Neon Pulse</option>
+                  </select>
+                </div>
+
+                {/* Aspect ratio default */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Aspek Rasio Default
+                  </label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(["4:3", "1:1", "9:16", "16:9"] as const).map((ar) => (
+                      <button
+                        key={ar}
+                        type="button"
+                        onClick={() => setCameraAspectRatio(ar)}
+                        className={`py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          cameraAspectRatio === ar
+                            ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                            : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                        }`}
+                      >
+                        {ar}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Countdown default */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Countdown (detik)
+                  </label>
+                  <div className="grid grid-cols-5 gap-1">
+                    {[0, 3, 5, 7, 10].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setCameraCountdown(n)}
+                        className={`py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          cameraCountdown === n
+                            ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                            : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                        }`}
+                      >
+                        {n === 0 ? "Off" : `${n}s`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Mirror default */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Mirror Default
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCameraMirror(!cameraMirror)}
+                    className={`w-full py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                      cameraMirror
+                        ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                        : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                    }`}
+                  >
+                    {cameraMirror ? "ON" : "OFF"}
+                  </button>
+                </div>
+
+                {/* Max photos per upload (full width) */}
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                    Maksimal Foto per Upload
+                  </label>
+                  <div className="grid grid-cols-7 gap-1">
+                    {[1, 3, 5, 7, 10, 15, 20].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setCameraMaxPhotos(n)}
+                        className={`py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          cameraMaxPhotos === n
+                            ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
+                            : "bg-[#1F0F3D]/40 text-slate-400 border-violet-950 hover:text-white"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-slate-500 mt-1">
+                    Batas jumlah foto yang bisa diupload pengunjung per sesi (1-20).
+                  </p>
+                </div>
+
+                {/* Save button (full width) */}
+                <div className="col-span-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveCameraConfig}
+                    disabled={savingCameraConfig}
+                    className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] text-[11px] font-extrabold uppercase tracking-wider hover:bg-[#dfbb66] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {savingCameraConfig ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle className="w-3.5 h-3.5" />
+                    )}
+                    {savingCameraConfig ? "Menyimpan..." : "Simpan Pengaturan Kamera"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Camera Settings & Live Preview — admin testing tool */}
           <div className="bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-5 shadow-2xl">
