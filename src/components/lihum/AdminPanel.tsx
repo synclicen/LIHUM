@@ -29,7 +29,6 @@ import {
   CloudUpload,
   Download,
   Clock,
-  Inbox,
   Camera,
   X,
 } from "lucide-react";
@@ -106,12 +105,6 @@ export default function AdminPanel({
 
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
-  const [pendingUploads, setPendingUploads] = useState<any[]>([]);
-  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
-  const [loadingPending, setLoadingPending] = useState(false);
-  const [deletingPendingId, setDeletingPendingId] = useState<string | null>(null);
-  const [clearingPending, setClearingPending] = useState(false);
-  const [togglingUploadId, setTogglingUploadId] = useState<string | null>(null);
 
   // ── Camera preview state (Upload Mandiri testing tool) ──
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
@@ -195,7 +188,6 @@ export default function AdminPanel({
       loadAccounts();
     }
     if (activeTab === "upload" && userRole === "admin") {
-      loadPendingUploads();
     }
   }, [activeTab, userRole]);
 
@@ -203,7 +195,6 @@ export default function AdminPanel({
   // their pending badge without the admin needing to visit the Upload tab.
   useEffect(() => {
     if (userRole === "admin") {
-      loadPendingUploads();
     }
   }, []);
 
@@ -280,161 +271,6 @@ export default function AdminPanel({
   };
 
   // ── Upload Mandiri (visitor self-upload) handlers ──
-  const loadPendingUploads = async () => {
-    if (userRole !== "admin") return;
-    setLoadingPending(true);
-    try {
-      const res = await fetch("/api/admin/pending-uploads", {
-        headers: { "x-user-email": userEmail },
-      });
-      if (!res.ok) throw new Error("Gagal memuat daftar upload mandiri.");
-      const data = await res.json();
-      setPendingUploads(data.uploads || []);
-      setPendingCounts(data.counts || {});
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg("Gagal memuat daftar upload mandiri dari server.");
-    } finally {
-      setLoadingPending(false);
-    }
-  };
-
-  const handleDeletePending = async (id: string) => {
-    setDeletingPendingId(id);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const res = await fetch(`/api/admin/pending-uploads/${id}`, {
-        method: "DELETE",
-        headers: { "x-user-email": userEmail },
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Gagal menghapus foto pending.");
-      }
-      setSuccessMsg("Foto pending berhasil dihapus.");
-      loadPendingUploads();
-      setTimeout(() => setSuccessMsg(""), 3000);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Gagal menghapus foto pending.");
-    } finally {
-      setDeletingPendingId(null);
-    }
-  };
-
-  const handleClearPending = async (projectId: string) => {
-    setClearingPending(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const res = await fetch(
-        `/api/admin/pending-uploads?projectId=${encodeURIComponent(projectId)}`,
-        {
-          method: "DELETE",
-          headers: { "x-user-email": userEmail },
-        }
-      );
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Gagal menghapus semua foto pending.");
-      }
-      const data = await res.json();
-      setSuccessMsg(
-        `${data.deleted || 0} foto pending berhasil dihapus dari galeri ini.`
-      );
-      loadPendingUploads();
-      setTimeout(() => setSuccessMsg(""), 3500);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Gagal menghapus semua foto pending.");
-    } finally {
-      setClearingPending(false);
-    }
-  };
-
-  const handleClearAllPending = async () => {
-    const galleriesWithPending = projects.filter(
-      (p) => (pendingCounts[p.id] || 0) > 0
-    );
-    if (galleriesWithPending.length === 0) {
-      setErrorMsg("Tidak ada foto pending untuk dihapus.");
-      setTimeout(() => setErrorMsg(""), 2500);
-      return;
-    }
-    setClearingPending(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-    let totalDeleted = 0;
-    let failedGalleries = 0;
-    try {
-      for (const p of galleriesWithPending) {
-        const res = await fetch(
-          `/api/admin/pending-uploads?projectId=${encodeURIComponent(p.id)}`,
-          {
-            method: "DELETE",
-            headers: { "x-user-email": userEmail },
-          }
-        );
-        if (!res.ok) {
-          failedGalleries += 1;
-          continue;
-        }
-        const data = await res.json();
-        totalDeleted += data.deleted || 0;
-      }
-      if (failedGalleries > 0) {
-        setErrorMsg(
-          `${totalDeleted} foto dihapus, ${failedGalleries} galeri gagal (coba refresh).`
-        );
-      } else {
-        setSuccessMsg(
-          `${totalDeleted} foto pending berhasil dihapus dari ${galleriesWithPending.length} galeri.`
-        );
-      }
-      loadPendingUploads();
-      setTimeout(() => {
-        setSuccessMsg("");
-        setErrorMsg("");
-      }, 4000);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Gagal menghapus semua foto pending.");
-    } finally {
-      setClearingPending(false);
-    }
-  };
-
-  const handleToggleUpload = async (projectId: string, current: boolean) => {
-    setTogglingUploadId(projectId);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-email": userEmail,
-        },
-        body: JSON.stringify({ allowVisitorUpload: !current }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(
-          err.error || "Gagal mengubah pengaturan Upload Mandiri."
-        );
-      }
-      setSuccessMsg(
-        !current
-          ? "Upload Mandiri diaktifkan untuk galeri ini."
-          : "Upload Mandiri dinonaktifkan untuk galeri ini."
-      );
-      onRefresh();
-      loadPendingUploads();
-      setTimeout(() => setSuccessMsg(""), 3000);
-    } catch (err: any) {
-      setErrorMsg(err.message || "Gagal mengubah pengaturan Upload Mandiri.");
-    } finally {
-      setTogglingUploadId(null);
-    }
-  };
 
   // ── Camera preview handlers (Upload Mandiri testing tool) ──
   const loadCameraDevices = useCallback(async () => {
@@ -581,7 +417,6 @@ export default function AdminPanel({
       if (data.success) {
         setSuccessMsg(data.message || "Foto tes tersimpan ke antrian pending.");
         setCapturedTestPhoto(null);
-        loadPendingUploads();
         setTimeout(() => setSuccessMsg(""), 3000);
       } else {
         setErrorMsg(data.error || "Gagal menyimpan foto tes.");
@@ -1440,15 +1275,7 @@ export default function AdminPanel({
             }`}
           >
             <CloudUpload className="w-4 h-4 text-amber-400" />
-            <span>
-              Upload Mandiri (
-              {loadingPending
-                ? "..."
-                : pendingUploads.length
-                ? pendingUploads.length
-                : "0"}
-              )
-            </span>
+            <span>Upload Mandiri</span>
           </button>
         </div>
       )}
@@ -1560,15 +1387,6 @@ export default function AdminPanel({
                               >
                                 <CloudUpload className="w-2.5 h-2.5 mr-0.5" />
                                 <span>Upload</span>
-                              </span>
-                            )}
-                            {(pendingCounts[project.id] || 0) > 0 && (
-                              <span
-                                className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center border font-bold bg-amber-950/50 text-amber-300 border-amber-700/40"
-                                title={`${pendingCounts[project.id]} foto pending ditinjau`}
-                              >
-                                <Inbox className="w-2.5 h-2.5 mr-0.5" />
-                                <span>{pendingCounts[project.id]} Pending</span>
                               </span>
                             )}
                           </div>
@@ -1777,53 +1595,6 @@ export default function AdminPanel({
             </div>
           )}
 
-          {/* Header: total pending + clear-all */}
-          <div className="flex items-center justify-between pb-3 border-b border-[#D4AF37]/15">
-            <div className="flex items-center space-x-2.5">
-              <CloudUpload className="w-5 h-5 text-[#D4AF37]" />
-              <h2 className="text-md font-serif font-bold text-white">
-                Upload Mandiri Pengunjung
-              </h2>
-              <span className="text-xs bg-amber-950/40 text-amber-300 border border-amber-700/40 py-1 px-3 rounded-full font-mono">
-                {loadingPending
-                  ? "..."
-                  : `${pendingUploads.length} Pending`}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={loadPendingUploads}
-                disabled={loadingPending}
-                className="p-1.5 rounded-lg border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-                title="Muat ulang daftar pending"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${
-                    loadingPending ? "animate-spin" : ""
-                  }`}
-                />
-              </button>
-              <button
-                type="button"
-                onClick={handleClearAllPending}
-                disabled={
-                  clearingPending ||
-                  loadingPending ||
-                  pendingUploads.length === 0
-                }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-600/50 bg-red-950/30 hover:bg-red-700/40 text-red-300 hover:text-white text-[11px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Hapus semua foto pending di semua galeri"
-              >
-                {clearingPending ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
-                )}
-                <span>Hapus Semua (Semua Galeri)</span>
-              </button>
-            </div>
-          </div>
 
           {/* Camera Settings & Live Preview — admin testing tool */}
           <div className="bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-5 shadow-2xl">
@@ -2045,7 +1816,7 @@ export default function AdminPanel({
                         ) : (
                           <Download className="w-3 h-3" />
                         )}
-                        Simpan ke Pending
+                        Simpan Foto Tes
                       </button>
                       <button
                         type="button"
@@ -2061,266 +1832,6 @@ export default function AdminPanel({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left: Per-gallery toggle overview */}
-            <div className="lg:col-span-1 bg-[#120A21] border border-violet-900/40 rounded-2xl p-5 shadow-2xl backdrop-blur-sm self-start">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-violet-900/30">
-                <div className="flex items-center space-x-2">
-                  <Sliders className="w-4 h-4 text-[#D4AF37]" />
-                  <h3 className="text-xs font-serif font-bold text-white uppercase tracking-wider">
-                    Status per Galeri
-                  </h3>
-                </div>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  {projects.length} galeri
-                </span>
-              </div>
-              {projects.length === 0 ? (
-                <p className="text-[10px] text-slate-500 italic text-center py-6">
-                  Belum ada galeri.
-                </p>
-              ) : (
-                <div className="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
-                  {projects.map((p) => {
-                    const isEnabled = !!p.allowVisitorUpload;
-                    const pendingCount = pendingCounts[p.id] || 0;
-                    const isToggling = togglingUploadId === p.id;
-                    return (
-                      <div
-                        key={p.id}
-                        className={`rounded-lg border p-2.5 transition-all ${
-                          isEnabled
-                            ? "bg-[#1F0F3D]/60 border-[#D4AF37]/40"
-                            : "bg-[#1F0F3D]/30 border-violet-950/60"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="min-w-0 flex-1">
-                            <p
-                              className="text-[11px] text-white font-semibold truncate"
-                              title={p.name}
-                            >
-                              {p.name}
-                            </p>
-                            <p className="text-[9px] text-slate-500 font-mono">
-                              {p.photoCount} foto
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {isEnabled ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-bold uppercase tracking-wider">
-                                On
-                              </span>
-                            ) : (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-950/50 text-slate-500 border border-slate-800 font-bold uppercase tracking-wider">
-                                Off
-                              </span>
-                            )}
-                            {pendingCount > 0 && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-950/50 text-amber-300 border border-amber-700/40 font-bold">
-                                {pendingCount} pending
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleUpload(p.id, isEnabled)}
-                          disabled={isToggling}
-                          className={`w-full py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 ${
-                            isEnabled
-                              ? "bg-slate-950/40 border border-slate-800 text-slate-300 hover:bg-slate-900/60"
-                              : "bg-[#4C2A85] border border-[#D4AF37]/35 text-white hover:bg-[#5a329d]"
-                          }`}
-                        >
-                          {isToggling ? (
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <CloudUpload className="w-3 h-3" />
-                          )}
-                          <span>{isEnabled ? "Nonaktifkan" : "Aktifkan"}</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Right: Pending uploads list grouped by gallery */}
-            <div className="lg:col-span-2 bg-[#120A21]/30 border border-violet-900/20 rounded-2xl p-5 shadow-2xl backdrop-blur-sm self-start">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-violet-900/30">
-                <div className="flex items-center space-x-2">
-                  <Inbox className="w-4 h-4 text-[#D4AF37]" />
-                  <h3 className="text-xs font-serif font-bold text-white uppercase tracking-wider">
-                    Antrian Upload Pengunjung
-                  </h3>
-                </div>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  {pendingUploads.length} foto
-                </span>
-              </div>
-
-              {loadingPending ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <RefreshCw className="w-6 h-6 text-violet-400 animate-spin mb-2" />
-                  <span className="text-xs text-slate-400 font-mono">
-                    Mengunduh daftar upload mandiri...
-                  </span>
-                </div>
-              ) : pendingUploads.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-[#D4AF37]/30 p-10 text-center">
-                  <Inbox className="w-10 h-10 text-[#D4AF37]/40 mx-auto mb-3" />
-                  <p className="text-sm text-slate-400">
-                    Tidak ada foto pending dari pengunjung.
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Aktifkan Upload Mandiri pada galeri dan bagikan QR upload
-                    kepada pengunjung.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-5 max-h-[70vh] overflow-y-auto custom-scrollbar pr-1">
-                  {(() => {
-                    // Group pending uploads by projectId
-                    const groups = new Map<string, any[]>();
-                    for (const u of pendingUploads) {
-                      const arr = groups.get(u.projectId) || [];
-                      arr.push(u);
-                      groups.set(u.projectId, arr);
-                    }
-                    const projectNameById = new Map<string, string>();
-                    for (const p of projects) {
-                      projectNameById.set(p.id, p.name);
-                    }
-                    return Array.from(groups.entries()).map(
-                      ([projectId, uploads]) => {
-                        const galleryName =
-                          projectNameById.get(projectId) ||
-                          `(unknown: ${projectId})`;
-                        return (
-                          <div
-                            key={projectId}
-                            className="rounded-lg border border-violet-950/60 bg-[#1F0F3D]/30 overflow-hidden"
-                          >
-                            {/* Group sub-header */}
-                            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#1F0F3D]/60 border-b border-violet-950/60">
-                              <div className="min-w-0 flex-1">
-                                <p
-                                  className="text-[11px] text-white font-bold truncate"
-                                  title={galleryName}
-                                >
-                                  {galleryName}
-                                </p>
-                                <p className="text-[9px] text-slate-500 font-mono">
-                                  {uploads.length} foto ·{" "}
-                                  {projectId}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleClearPending(projectId)}
-                                disabled={clearingPending}
-                                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-600/40 bg-red-950/30 hover:bg-red-700/40 text-red-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all disabled:opacity-50"
-                                title="Hapus semua foto pending galeri ini"
-                              >
-                                {clearingPending ? (
-                                  <RefreshCw className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-3 h-3" />
-                                )}
-                                <span>Hapus Semua</span>
-                              </button>
-                            </div>
-                            {/* List of pending photos */}
-                            <div className="divide-y divide-violet-950/40">
-                              {uploads.map((u) => {
-                                const downloadSrc = `/api/admin/pending-uploads/${u.id}?admin=${encodeURIComponent(
-                                  userEmail
-                                )}`;
-                                return (
-                                  <div
-                                    key={u.id}
-                                    className="flex items-start gap-3 px-3 py-2.5 hover:bg-violet-950/20 transition-colors"
-                                  >
-                                    {/* Thumbnail */}
-                                    <a
-                                      href={downloadSrc}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="shrink-0 block w-16 h-16 rounded-md overflow-hidden border border-violet-950 bg-black/40 hover:border-[#D4AF37]/50 transition-all"
-                                      title="Klik untuk membuka foto"
-                                    >
-                                      <img
-                                        src={downloadSrc}
-                                        alt={u.fileName}
-                                        className="w-full h-full object-cover"
-                                        loading="lazy"
-                                      />
-                                    </a>
-                                    {/* Info */}
-                                    <div className="min-w-0 flex-1">
-                                      <p
-                                        className="text-[11px] text-white font-semibold truncate"
-                                        title={u.fileName}
-                                      >
-                                        {u.fileName}
-                                      </p>
-                                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
-                                        <span className="text-[9px] text-slate-400 font-mono">
-                                          {u.sizeKB} KB
-                                        </span>
-                                        {u.uploaderIp && (
-                                          <span className="text-[9px] text-slate-500 font-mono">
-                                            IP: {u.uploaderIp}
-                                          </span>
-                                        )}
-                                        <span className="text-[9px] text-slate-500 font-mono inline-flex items-center gap-0.5">
-                                          <Clock className="w-2.5 h-2.5" />
-                                          {u.createdAt}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    {/* Actions */}
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <a
-                                        href={downloadSrc}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="p-1.5 rounded-md border border-violet-950 hover:border-[#D4AF37] text-slate-400 hover:text-[#D4AF37] hover:bg-[#4C2A85]/20 transition-all cursor-pointer"
-                                        title="Download foto"
-                                      >
-                                        <Download className="w-3.5 h-3.5" />
-                                      </a>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleDeletePending(u.id)
-                                        }
-                                        disabled={deletingPendingId === u.id}
-                                        className="p-1.5 rounded-md border border-violet-950 hover:border-red-600/50 text-slate-400 hover:text-red-400 hover:bg-red-500/5 transition-all disabled:opacity-50 cursor-pointer"
-                                        title="Hapus foto"
-                                      >
-                                        {deletingPendingId === u.id ? (
-                                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        )}
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      }
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       ) : (
         /* Accounts Management Tab view */
