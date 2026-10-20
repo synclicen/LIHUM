@@ -400,12 +400,23 @@ export async function syncProjectWithToken(
   });
 
   const lastSyncedAt = new Date().toISOString();
-  await replaceProjectPhotos(projectId, mappedPhotos);
-  await updateProjectSync(projectId, mappedPhotos.length, lastSyncedAt);
+  const syncDelta = await replaceProjectPhotos(projectId, mappedPhotos);
+
+  // CRITICAL: skip updateProjectSync write when nothing changed.
+  // Auto-sync runs every 3m for 52 galleries = 24,960 potential writes/day.
+  // With this skip: 0 writes when nothing changed (the common case).
+  // Only write lastSyncedAt when photos were actually upserted/deleted.
+  if (syncDelta.upserted > 0 || syncDelta.deleted > 0) {
+    await updateProjectSync(projectId, mappedPhotos.length, lastSyncedAt);
+    console.log(`[Sync] Project ${projectId}: ${syncDelta.upserted} upserted, ${syncDelta.deleted} deleted — updated lastSyncedAt`);
+  } else {
+    console.log(`[Sync] Project ${projectId}: 0 changes — SKIPPED write`);
+  }
 
   return {
     success: true,
     photoCount: mappedPhotos.length,
+    syncDelta,
     foldersScanned: totalFoldersScanned,
     driveFoldersCount: folders.length,
     maxDepthReached: totalMaxDepth,
