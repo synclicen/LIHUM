@@ -43,6 +43,28 @@ interface AdminPanelProps {
   userRole: "admin" | "manager";
 }
 
+// ── Cinematic filters (same as /upload page) ──
+// Applied to live preview via CSS filter so admin sees the effect real-time.
+interface CameraFilter {
+  id: string;
+  css: string;
+}
+const CAMERA_FILTERS: CameraFilter[] = [
+  { id: "original", css: "none" },
+  { id: "purple-haze", css: "hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)" },
+  { id: "vintage", css: "sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)" },
+  { id: "noir", css: "grayscale(1) contrast(1.4) brightness(1.05)" },
+  { id: "cool-blue", css: "hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)" },
+  { id: "warm-sunset", css: "sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)" },
+  { id: "cinematic", css: "contrast(1.15) saturate(1.1)" },
+  { id: "vintage-film", css: "sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)" },
+  { id: "neon-pulse", css: "hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)" },
+];
+
+function getCameraFilterCss(filterId: string): string {
+  return CAMERA_FILTERS.find((f) => f.id === filterId)?.css || "none";
+}
+
 export default function AdminPanel({
   projects,
   accessToken,
@@ -362,7 +384,12 @@ export default function AdminPanel({
       previewStreamRef.current = null;
     }
     try {
-      const [w, h] = cameraResolution.split("x").map(Number);
+      // Parse resolution from global config, swap to portrait if aspect is 9:16
+      // (same logic as visitor /upload page — ensures admin preview matches visitor view)
+      const [w, h] = (cameraAspectRatio === "9:16"
+        ? (cameraResolution === "3840x2160" ? "2160x3840" : cameraResolution === "1280x720" ? "720x1280" : "1080x1920")
+        : cameraResolution
+      ).split("x").map(Number);
       const constraints: MediaStreamConstraints = {
         video: selectedDeviceId
           ? {
@@ -404,7 +431,7 @@ export default function AdminPanel({
     } finally {
       setCameraStarting(false);
     }
-  }, [selectedDeviceId, cameraFacing, cameraResolution, loadCameraDevices]);
+  }, [selectedDeviceId, cameraFacing, cameraResolution, cameraAspectRatio, loadCameraDevices]);
 
   const stopCameraPreview = useCallback(() => {
     if (previewStreamRef.current) {
@@ -420,36 +447,52 @@ export default function AdminPanel({
   const handleCaptureTestPhoto = useCallback(() => {
     if (!previewVideoRef.current) return;
     const video = previewVideoRef.current;
+    if (!video || video.videoWidth === 0) return;
+
+    // Use the global cameraAspectRatio for the capture dimensions
+    const aspectDims: Record<string, { w: number; h: number }> = {
+      "4:3": { w: 1440, h: 1080 },
+      "1:1": { w: 1200, h: 1200 },
+      "9:16": { w: 1080, h: 1920 },
+      "16:9": { w: 1920, h: 1080 },
+    };
+    const dims = aspectDims[cameraAspectRatio] || aspectDims["4:3"];
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = dims.w;
+    canvas.height = dims.h;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    // Mirror if front camera
-    if (cameraFacing === "user") {
-      ctx.translate(canvas.width, 0);
+
+    // Apply cinematic filter to canvas (same as live preview)
+    const filterCss = getCameraFilterCss(cameraFilter);
+    if (filterCss !== "none") {
+      ctx.filter = filterCss;
+    }
+    // Mirror (from global config, not cameraFacing)
+    if (cameraMirror) {
+      ctx.translate(dims.w, 0);
       ctx.scale(-1, 1);
     }
-    ctx.drawImage(video, 0, 0);
-    // Resize to max 1600px on the long edge
-    let { width, height } = canvas;
-    const MAX = 1600;
-    if (width > MAX || height > MAX) {
-      if (width >= height) {
-        height = Math.round((height * MAX) / width);
-        width = MAX;
-      } else {
-        width = Math.round((width * MAX) / height);
-        height = MAX;
-      }
+    // Cover-fit crop (no stretching) — same as visitor /upload page
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const canvasRatio = dims.w / dims.h;
+    const videoRatio = vw / vh;
+    let sx = 0, sy = 0, sw = vw, sh = vh;
+    if (videoRatio > canvasRatio) {
+      sw = vh * canvasRatio;
+      sx = (vw - sw) / 2;
+    } else {
+      sh = vw / canvasRatio;
+      sy = (vh - sh) / 2;
     }
-    const resized = document.createElement("canvas");
-    resized.width = width;
-    resized.height = height;
-    resized.getContext("2d")!.drawImage(canvas, 0, 0, width, height);
-    const dataUrl = resized.toDataURL("image/jpeg", 0.82);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dims.w, dims.h);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.filter = "none";
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
     setCapturedTestPhoto(dataUrl);
-  }, [cameraFacing]);
+  }, [cameraAspectRatio, cameraFilter, cameraMirror]);
 
   const handleSaveTestPhoto = async () => {
     if (!capturedTestPhoto || !captureTargetGallery) {
@@ -493,8 +536,6 @@ export default function AdminPanel({
   };
 
   // ── Camera preview lifecycle (Upload Mandiri testing tool) ──
-  // Load device list when entering the upload tab; stop camera when leaving
-  // the upload tab or when the component unmounts.
   useEffect(() => {
     if (activeTab === "upload") {
       loadCameraDevices();
@@ -506,6 +547,18 @@ export default function AdminPanel({
       }
     };
   }, [activeTab, loadCameraDevices]);
+
+  // Auto-restart camera when facing/resolution/aspect changes WHILE preview active.
+  // This ensures the admin preview always reflects the exact constraints a
+  // visitor would get (same facing, same resolution, same aspect ratio).
+  useEffect(() => {
+    if (cameraPreviewActive && previewStreamRef.current) {
+      const timer = setTimeout(() => {
+        startCameraPreview();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [cameraFacing, cameraResolution, cameraAspectRatio]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1838,7 +1891,7 @@ export default function AdminPanel({
                   <select
                     value={selectedDeviceId}
                     onChange={(e) => setSelectedDeviceId(e.target.value)}
-                    disabled={cameraPreviewActive}
+                    
                     className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"
                   >
                     {cameraDevices.length === 0 ? (
@@ -1856,13 +1909,13 @@ export default function AdminPanel({
                 {/* Facing mode toggle */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
-                    Orientasi
+                    Orientasi <span className="text-[#D4AF37] normal-case font-mono">(global)</span>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setCameraFacing("environment")}
-                      disabled={cameraPreviewActive}
+                      
                       className={`py-2 rounded-xl text-[10px] font-bold border transition-all disabled:opacity-50 ${
                         cameraFacing === "environment"
                           ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
@@ -1874,7 +1927,7 @@ export default function AdminPanel({
                     <button
                       type="button"
                       onClick={() => setCameraFacing("user")}
-                      disabled={cameraPreviewActive}
+                      
                       className={`py-2 rounded-xl text-[10px] font-bold border transition-all disabled:opacity-50 ${
                         cameraFacing === "user"
                           ? "bg-[#4C2A85] text-[#D4AF37] border-[#D4AF37]/70"
@@ -1889,12 +1942,12 @@ export default function AdminPanel({
                 {/* Resolution */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
-                    Resolusi
+                    Resolusi <span className="text-[#D4AF37] normal-case font-mono">(global)</span>
                   </label>
                   <select
                     value={cameraResolution}
                     onChange={(e) => setCameraResolution(e.target.value)}
-                    disabled={cameraPreviewActive}
+                    
                     className="w-full bg-[#1F0F3D]/50 border border-violet-950 rounded-xl px-3 py-2 text-[11px] text-white focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"
                   >
                     <option value="1280x720">HD (1280×720)</option>
@@ -1947,9 +2000,37 @@ export default function AdminPanel({
                 </p>
               </div>
 
-              {/* Right: Live preview */}
+              {/* Right: Live preview — synced with global camera config above */}
               <div className="space-y-3">
-                <div className="relative rounded-xl overflow-hidden bg-black aspect-[4/3] border-2 border-[#D4AF37]/30">
+                {/* Active settings indicator — shows current applied config */}
+                <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+                  <span className="text-slate-500 uppercase tracking-wider">Aktif:</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#4C2A85]/50 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-bold">
+                    {cameraFilter}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#4C2A85]/50 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-bold">
+                    {cameraAspectRatio}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#4C2A85]/50 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-bold">
+                    {cameraMirror ? "mirror" : "no-mirror"}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#4C2A85]/50 text-[#D4AF37] border border-[#D4AF37]/30 font-mono font-bold">
+                    max {cameraMaxPhotos} foto
+                  </span>
+                </div>
+                <div
+                  className="relative rounded-xl overflow-hidden bg-black border-2 border-[#D4AF37]/30"
+                  style={{
+                    aspectRatio:
+                      cameraAspectRatio === "1:1"
+                        ? "1 / 1"
+                        : cameraAspectRatio === "9:16"
+                        ? "9 / 16"
+                        : cameraAspectRatio === "16:9"
+                        ? "16 / 9"
+                        : "4 / 3",
+                  }}
+                >
                   <video
                     ref={previewVideoRef}
                     autoPlay
@@ -1958,13 +2039,21 @@ export default function AdminPanel({
                     className="w-full h-full object-cover"
                     style={{
                       transform:
-                        cameraFacing === "user" && cameraPreviewActive
+                        cameraMirror && cameraPreviewActive
                           ? "scaleX(-1)"
                           : "none",
+                      filter:
+                        cameraPreviewActive
+                          ? getCameraFilterCss(cameraFilter)
+                          : "none",
+                      transition: "filter 0.15s ease-out, transform 0.15s ease-out",
                     }}
                   />
                   {!cameraPreviewActive && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                    <div
+                      className="absolute inset-0 flex flex-col items-center justify-center text-slate-500"
+                      style={{ filter: getCameraFilterCss(cameraFilter) }}
+                    >
                       <Camera className="w-10 h-10 mb-2 opacity-30" />
                       <p className="text-[10px]">Kamera belum aktif</p>
                       <p className="text-[9px] text-slate-600">
