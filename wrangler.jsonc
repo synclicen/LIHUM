@@ -11,8 +11,14 @@
   "observability": {
     "enabled": true
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lihum-db",
+      "database_id": "dccb5f09-9607-4529-ac7d-d4a0e36f94d3"
+    }
+  ],
   "vars": {
-    "DATABASE_URL": "libsql://lihum-enigmatic-aquarius-tehb9z.aws-us-east-1.turso.io",
     "APP_URL": "https://lihum.synclicen.workers.dev"
   }
 }

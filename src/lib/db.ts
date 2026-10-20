@@ -1,44 +1,115 @@
-import { createClient, type Client } from "@libsql/client";
-
 /**
- * Turso / libSQL database client.
+ * Database adapter — Cloudflare D1 (production) + libSQL (local dev fallback).
  *
- * Works in three environments without code changes:
- *  - Local dev (sandbox): DATABASE_URL="file:/abs/path/to.db"  (libSQL local file mode)
- *  - Turso (cloud):        DATABASE_URL="libsql://<db>.turso.io" + TURSO_AUTH_TOKEN
- *  - Cloudflare Workers:   same Turso URL + token (HTTP transport, no native binding needed)
+ * Production: uses D1 binding via OpenNext's getCloudflareContext().
+ * Local dev: uses libSQL client with file: URL.
  *
- * The client is created LAZILY (on first DB access) so that `next build` can
- * evaluate the module without needing DATABASE_URL set at build time.
+ * D1 is FREE (100K writes/day, 5M reads/day, 5GB storage) — runs in-edge
+ * (same Cloudflare datacenter as Worker) so latency is ~1ms.
  */
 
-const globalForDb = globalThis as unknown as { __lihumDb?: Client };
+import { createClient, type Client } from "@libsql/client";
 
-function createDb(): Client {
+interface ExecuteResult {
+  rows: Record<string, unknown>[];
+  rowsAffected: number;
+}
+
+// Unified DB interface (subset of libSQL Client that queries.ts uses)
+interface UnifiedClient {
+  execute(stmt: string | { sql: string; args?: unknown[] }): Promise<ExecuteResult>;
+  batch(stmts: { sql: string; args?: unknown[] }[]): Promise<ExecuteResult[]>;
+}
+
+// ── D1 adapter (production — Cloudflare Workers) ──
+class D1Adapter implements UnifiedClient {
+  private d1: any;
+  constructor(d1Binding: any) { this.d1 = d1Binding; }
+
+  async execute(stmt: string | { sql: string; args?: unknown[] }): Promise<ExecuteResult> {
+    const sqlStr = typeof stmt === "string" ? stmt : stmt.sql;
+    const args = typeof stmt === "string" ? undefined : stmt.args;
+    const prepared = args && args.length > 0
+      ? this.d1.prepare(sqlStr).bind(...args)
+      : this.d1.prepare(sqlStr);
+    const result = await prepared.all();
+    return { rows: result.results || [], rowsAffected: result.meta?.changes || 0 };
+  }
+
+  async batch(stmts: { sql: string; args?: unknown[] }[]): Promise<ExecuteResult[]> {
+    const prepared = stmts.map(s =>
+      s.args && s.args.length > 0
+        ? this.d1.prepare(s.sql).bind(...s.args)
+        : this.d1.prepare(s.sql)
+    );
+    const results = await this.d1.batch(prepared);
+    return results.map((r: any) => ({
+      rows: r.results || [],
+      rowsAffected: r.meta?.changes || 0,
+    }));
+  }
+}
+
+// ── libSQL adapter (local dev — file: URL) ──
+class LibSqlAdapter implements UnifiedClient {
+  private client: Client;
+  constructor(client: Client) { this.client = client; }
+
+  async execute(stmt: string | { sql: string; args?: unknown[] }): Promise<ExecuteResult> {
+    const result = await this.client.execute(stmt as any);
+    return {
+      rows: result.rows as unknown as Record<string, unknown>[],
+      rowsAffected: result.rowsAffected,
+    };
+  }
+
+  async batch(stmts: { sql: string; args?: unknown[] }[]): Promise<ExecuteResult[]> {
+    const results = await this.client.batch(stmts as any);
+    return results.map((r) => ({
+      rows: r.rows as unknown as Record<string, unknown>[],
+      rowsAffected: r.rowsAffected,
+    }));
+  }
+}
+
+const globalForDb = globalThis as unknown as { __lihumDb?: UnifiedClient };
+
+function createDb(): UnifiedClient {
+  // ── Production: use D1 binding ──
+  // OpenNext exposes Cloudflare env bindings via getCloudflareContext().
+  // We use __non_webpack_require__ to avoid bundler issues.
+  try {
+    const mod = __non_webpack_require__("@opennextjs/cloudflare");
+    const ctx = mod.getCloudflareContext();
+    if (ctx?.env?.DB) {
+      console.log("[DB] Using Cloudflare D1 binding");
+      return new D1Adapter(ctx.env.DB);
+    }
+  } catch {
+    // Not in Cloudflare Workers (local dev) — fall through to libSQL
+  }
+
+  // ── Local dev: use libSQL client ──
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
-      "DATABASE_URL is not set. For local dev use 'file:./db/custom.db', for Turso use 'libsql://...'."
+      "No database available. In production, D1 binding is used. For local dev, set DATABASE_URL=file:./db/custom.db"
     );
   }
   const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
-  return createClient({ url, authToken });
+  const client = createClient({ url, authToken });
+  console.log("[DB] Using libSQL client (local dev)");
+  return new LibSqlAdapter(client);
 }
 
-/** Returns the cached client, creating it on first call (lazy). */
-function getDb(): Client {
+function getDb(): UnifiedClient {
   if (globalForDb.__lihumDb) return globalForDb.__lihumDb;
   const client = createDb();
   globalForDb.__lihumDb = client;
   return client;
 }
 
-/**
- * Lazy proxy — `createDb()` is only invoked on first property access,
- * not at module load. This lets `next build` import the module without
- * DATABASE_URL being set (build-time prerendering won't trigger DB calls).
- */
-export const db: Client = new Proxy({} as Client, {
+export const db: UnifiedClient = new Proxy({} as UnifiedClient, {
   get(_target, prop, receiver) {
     const client = getDb();
     const value = Reflect.get(client, prop, receiver);
@@ -48,11 +119,6 @@ export const db: Client = new Proxy({} as Client, {
 
 let schemaPromise: Promise<void> | null = null;
 
-/**
- * Adds a column to a table if it doesn't already exist.
- * Used for schema migrations on existing databases (CREATE TABLE IF NOT EXISTS
- * won't add new columns to an already-existing table).
- */
 async function ensureColumn(table: string, column: string, definition: string) {
   const result = await db.execute({ sql: `PRAGMA table_info(${table})` });
   const existing = result.rows.map((r) => String((r as Record<string, unknown>).name));
@@ -61,135 +127,97 @@ async function ensureColumn(table: string, column: string, definition: string) {
   }
 }
 
-/**
- * Idempotently creates the LIHUM schema (Project, Photo, Account,
- * PendingUpload) and runs lightweight column migrations.
- *
- * PERFORMANCE: the schema check result is cached for the lifetime of the
- * Worker isolate. Schema only changes via code deploys (which spin up a new
- * isolate), so re-checking on every request is pure waste — especially on
- * Turso where each of the ~13 statements is a 0.3-0.4s round trip (total
- * 4-5s per request). Caching eliminates ALL of that overhead after the first
- * request.
- *
- * On failure (DB down, etc.) the promise is NOT cached, so the next request
- * retries — no permanent broken state.
- */
 export async function ensureSchema(): Promise<void> {
   if (schemaPromise) return schemaPromise;
   const p = (async () => {
-    await db.batch([
-      {
-        sql: `CREATE TABLE IF NOT EXISTS Project (
-  id              TEXT PRIMARY KEY,
-  name            TEXT NOT NULL,
-  description     TEXT NOT NULL DEFAULT '',
-  driveFolderUrl  TEXT NOT NULL,
-  driveFolderId   TEXT NOT NULL,
-  displayMode     TEXT NOT NULL DEFAULT 'all',
-  autoSyncEnabled INTEGER NOT NULL DEFAULT 0,
-  autoSyncInterval TEXT NOT NULL DEFAULT '3m',
-  lastSyncedAt    TEXT NOT NULL DEFAULT '',
-  photoCount      INTEGER NOT NULL DEFAULT 0,
-  createdAt       TEXT NOT NULL
-)`,
-      },
-      {
-        sql: `CREATE TABLE IF NOT EXISTS Photo (
-  id             TEXT NOT NULL,
-  name           TEXT NOT NULL,
-  mimeType       TEXT NOT NULL DEFAULT '',
-  thumbnailLink  TEXT NOT NULL DEFAULT '',
-  webContentLink TEXT NOT NULL DEFAULT '',
-  size           TEXT NOT NULL DEFAULT '',
-  createdTime    TEXT NOT NULL DEFAULT '',
-  projectId      TEXT NOT NULL,
-  PRIMARY KEY (projectId, id),
-  FOREIGN KEY (projectId) REFERENCES Project(id) ON DELETE CASCADE
-)`,
-      },
-      {
-        sql: `CREATE INDEX IF NOT EXISTS idx_photo_projectId ON Photo(projectId)`,
-      },
-      {
-        sql: `CREATE TABLE IF NOT EXISTS Account (
-  id          TEXT PRIMARY KEY,
-  email       TEXT NOT NULL UNIQUE,
-  role        TEXT NOT NULL DEFAULT 'manager',
-  displayName TEXT NOT NULL DEFAULT '',
-  addedAt     TEXT NOT NULL
-)`,
-      },
-    ]);
-
-    // Migrations: add new columns to existing Project table (idempotent).
-    await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
-    await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
-    await ensureColumn("Project", "isHidden", "INTEGER NOT NULL DEFAULT 0");
-    await ensureColumn("Project", "autoFilterEnabled", "INTEGER NOT NULL DEFAULT 0");
-    // allowVisitorUpload: 0 = no, 1 = visitors can upload photos via /upload page
-    await ensureColumn("Project", "allowVisitorUpload", "INTEGER NOT NULL DEFAULT 0");
-    // viewCount: how many times the gallery page was viewed by visitors.
-    // downloadCount: how many times photos from this gallery were downloaded.
-    await ensureColumn("Project", "viewCount", "INTEGER NOT NULL DEFAULT 0");
-    await ensureColumn("Project", "downloadCount", "INTEGER NOT NULL DEFAULT 0");
-
-    // PendingUpload: visitor-uploaded photos (via Upload Mandiri) awaiting
-    // admin review. Photos are stored as base64 (client-side resized to keep
-    // payloads small). Admin downloads them and manually adds to the Drive
-    // folder, or deletes (rejects). No Service Account needed.
-    await db.execute({
-      sql: `CREATE TABLE IF NOT EXISTS PendingUpload (
-  id          TEXT PRIMARY KEY,
-  projectId   TEXT NOT NULL,
-  fileName    TEXT NOT NULL,
-  mimeType    TEXT NOT NULL DEFAULT 'image/jpeg',
-  base64Data  TEXT NOT NULL,
-  size        INTEGER NOT NULL DEFAULT 0,
-  uploaderIp  TEXT NOT NULL DEFAULT '',
-  createdAt   TEXT NOT NULL,
-  FOREIGN KEY (projectId) REFERENCES Project(id) ON DELETE CASCADE
-)`,
+    // Check if all tables exist (READ ONLY)
+    const tableCheck = await db.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Project','Photo','Account','PendingUpload','ProjectFolder','Setting')",
     });
-    await db.execute({
-      sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)`,
-    });
+    const existingTables = new Set(
+      tableCheck.rows.map((r) => String((r as Record<string, unknown>).name))
+    );
+    const allTablesExist =
+      existingTables.has("Project") &&
+      existingTables.has("Photo") &&
+      existingTables.has("Account") &&
+      existingTables.has("PendingUpload") &&
+      existingTables.has("ProjectFolder") &&
+      existingTables.has("Setting");
 
-    // Migrations: add modifiedTime to Photo table for "Date Modified" sort.
-    await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
-    // aiHidden: 0 = visible, 1 = hidden by AI filter (low quality)
-    await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
+    if (allTablesExist) {
+      try {
+        await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
+        await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
+        await ensureColumn("Project", "isHidden", "INTEGER NOT NULL DEFAULT 0");
+        await ensureColumn("Project", "autoFilterEnabled", "INTEGER NOT NULL DEFAULT 0");
+        await ensureColumn("Project", "allowVisitorUpload", "INTEGER NOT NULL DEFAULT 0");
+        await ensureColumn("Project", "viewCount", "INTEGER NOT NULL DEFAULT 0");
+        await ensureColumn("Project", "downloadCount", "INTEGER NOT NULL DEFAULT 0");
+        await ensureColumn("Project", "cameraFilter", "TEXT NOT NULL DEFAULT 'original'");
+        await ensureColumn("Project", "cameraAspectRatio", "TEXT NOT NULL DEFAULT '4:3'");
+        await ensureColumn("Project", "cameraResolution", "TEXT NOT NULL DEFAULT '1920x1080'");
+        await ensureColumn("Project", "cameraCountdown", "INTEGER NOT NULL DEFAULT 3");
+        await ensureColumn("Project", "cameraMirror", "INTEGER NOT NULL DEFAULT 1");
+        await ensureColumn("Project", "cameraFacing", "TEXT NOT NULL DEFAULT 'environment'");
+        await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
+        await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
+      } catch (writeErr: any) {
+        console.warn("[ensureSchema] Column migration skipped:", writeErr?.message?.slice(0, 80));
+      }
+      return;
+    }
 
-    // ProjectFolder: additional Google Drive folders linked to a gallery beyond
-    // the primary one (Project.driveFolderId). Lets a manager add multiple
-    // photographer-contributed folders (each shared publicly by its owner) to a
-    // single galeri. Sync scans the primary folder + all additional folders and
-    // merges the photos (deduped by Drive file ID).
-    await db.execute({
-      sql: `CREATE TABLE IF NOT EXISTS ProjectFolder (
-  id             TEXT PRIMARY KEY,
-  projectId      TEXT NOT NULL,
-  driveFolderUrl TEXT NOT NULL,
-  driveFolderId  TEXT NOT NULL,
-  label          TEXT NOT NULL DEFAULT '',
-  addedBy        TEXT NOT NULL DEFAULT '',
-  addedAt        TEXT NOT NULL,
-  FOREIGN KEY (projectId) REFERENCES Project(id) ON DELETE CASCADE
-)`,
-    });
-    await db.execute({
-      sql: `CREATE INDEX IF NOT EXISTS idx_projectfolder_projectId ON ProjectFolder(projectId)`,
-    });
+    // Tables missing — create them
+    try {
+      await db.batch([
+        { sql: `CREATE TABLE IF NOT EXISTS Project (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  driveFolderUrl TEXT NOT NULL, driveFolderId TEXT NOT NULL,
+  displayMode TEXT NOT NULL DEFAULT 'all',
+  visibility TEXT NOT NULL DEFAULT 'public', password TEXT NOT NULL DEFAULT '',
+  isHidden INTEGER NOT NULL DEFAULT 0, autoFilterEnabled INTEGER NOT NULL DEFAULT 0,
+  allowVisitorUpload INTEGER NOT NULL DEFAULT 0,
+  viewCount INTEGER NOT NULL DEFAULT 0, downloadCount INTEGER NOT NULL DEFAULT 0,
+  cameraFilter TEXT NOT NULL DEFAULT 'original', cameraAspectRatio TEXT NOT NULL DEFAULT '4:3',
+  cameraResolution TEXT NOT NULL DEFAULT '1920x1080', cameraCountdown INTEGER NOT NULL DEFAULT 3,
+  cameraMirror INTEGER NOT NULL DEFAULT 1, cameraFacing TEXT NOT NULL DEFAULT 'environment',
+  autoSyncEnabled INTEGER NOT NULL DEFAULT 0, autoSyncInterval TEXT NOT NULL DEFAULT '3m',
+  lastSyncedAt TEXT NOT NULL DEFAULT '', photoCount INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL
+)` },
+        { sql: `CREATE TABLE IF NOT EXISTS Photo (
+  id TEXT NOT NULL, name TEXT NOT NULL, mimeType TEXT NOT NULL DEFAULT '',
+  thumbnailLink TEXT NOT NULL DEFAULT '', webContentLink TEXT NOT NULL DEFAULT '',
+  size TEXT NOT NULL DEFAULT '', createdTime TEXT NOT NULL DEFAULT '',
+  modifiedTime TEXT NOT NULL DEFAULT '', aiHidden INTEGER NOT NULL DEFAULT 0,
+  projectId TEXT NOT NULL, PRIMARY KEY (projectId, id)
+)` },
+        { sql: `CREATE INDEX IF NOT EXISTS idx_photo_projectId ON Photo(projectId)` },
+        { sql: `CREATE TABLE IF NOT EXISTS Account (
+  id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, role TEXT NOT NULL DEFAULT 'manager',
+  displayName TEXT NOT NULL DEFAULT '', addedAt TEXT NOT NULL
+)` },
+        { sql: `CREATE TABLE IF NOT EXISTS PendingUpload (
+  id TEXT PRIMARY KEY, projectId TEXT NOT NULL, fileName TEXT NOT NULL,
+  mimeType TEXT NOT NULL DEFAULT 'image/jpeg', base64Data TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0, uploaderIp TEXT NOT NULL DEFAULT '', createdAt TEXT NOT NULL
+)` },
+        { sql: `CREATE INDEX IF NOT EXISTS idx_pending_projectId ON PendingUpload(projectId)` },
+        { sql: `CREATE TABLE IF NOT EXISTS ProjectFolder (
+  id TEXT PRIMARY KEY, projectId TEXT NOT NULL, driveFolderUrl TEXT NOT NULL,
+  driveFolderId TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', addedBy TEXT NOT NULL DEFAULT '',
+  addedAt TEXT NOT NULL
+)` },
+        { sql: `CREATE INDEX IF NOT EXISTS idx_projectfolder_projectId ON ProjectFolder(projectId)` },
+        { sql: `CREATE TABLE IF NOT EXISTS Setting (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL
+)` },
+      ]);
+    } catch (writeErr: any) {
+      console.error("[ensureSchema] Table creation failed:", writeErr?.message?.slice(0, 100));
+      throw writeErr;
+    }
   })();
-  // Set immediately so concurrent calls during the first run dedup to the
-  // same promise. On success it stays cached for the isolate's lifetime
-  // (schema only changes via code deploy → new isolate). On failure we
-  // clear it so the next request retries from scratch.
   schemaPromise = p;
-  try {
-    await p;
-  } catch (err) {
-    schemaPromise = null;
-    throw err;
-  }
+  try { await p; } catch (err) { schemaPromise = null; throw err; }
 }
