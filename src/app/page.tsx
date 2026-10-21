@@ -228,12 +228,89 @@ export default function App() {
     return () => clearInterval(fetchMetadataInterval);
   }, []);
 
-  // ── Auto-sync DISABLED ──
-  // Previously: auto-sync ran every 30s-3m for all galleries with autoSyncEnabled.
-  // This caused D1 free tier writes to exceed 100K/day limit.
-  // Now: admin syncs manually via "Sinkron Drive" button in AdminPanel.
-  // autoSyncEnabled/autoSyncInterval columns remain in DB for backward compat
-  // but the scheduler is completely removed — 0 background writes.
+  // ── Auto-sync scheduler ──
+  // Runs for galleries with autoSyncEnabled=true. With delta-only sync
+  // (replaceProjectPhotos skips writes when 0 changes), each sync produces
+  // 0 D1 writes when nothing changed — only reads. So auto-sync is safe
+  // for D1 free tier (100K writes/day).
+  //
+  // Writes only happen when photos actually change in Drive (new/removed):
+  // ~5 writes/day total across all galleries.
+  //
+  // Reads per sync: ~3 (findProjectById + getProjectFolders + replaceProjectPhotos SELECT)
+  // 52 galleries × 5m interval = 14,976 syncs/day × 3 reads = 44,928 reads/day (0.9% of 5M limit)
+  const projectsRef = useRef<ProjectSummary[]>([]);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    if (!accessToken || !user) return;
+
+    const syncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
+    if (syncedProjects.length === 0) return;
+
+    const intervals: ReturnType<typeof setInterval>[] = [];
+
+    syncedProjects.forEach((proj) => {
+      let ms = 300000; // default 5m (minimum)
+      switch (proj.autoSyncInterval) {
+        case "5m":
+          ms = 300000;
+          break;
+        case "1h":
+          ms = 3600000;
+          break;
+        case "6h":
+          ms = 21600000;
+          break;
+        // 30s, 1m, 3m are no longer supported — treated as 5m minimum
+        // to stay within D1 free tier limits.
+        default:
+          ms = 300000;
+      }
+
+      const runSync = async () => {
+        const currentProj = projectsRef.current.find((p) => p.id === proj.id);
+        if (!currentProj || !currentProj.autoSyncEnabled) return;
+
+        try {
+          console.log(`[Auto-Sync] Syncing "${currentProj.name}"...`);
+          const res = await fetch(`/api/projects/${proj.id}/sync`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "x-user-email": user.email || "",
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.syncDelta) {
+              console.log(`[Auto-Sync] Done "${currentProj.name}": ${data.syncDelta.upserted} new, ${data.syncDelta.deleted} removed, ${data.syncDelta.unchanged} unchanged`);
+            }
+            loadProjects();
+          }
+        } catch (err) {
+          console.error(`[Auto-Sync] Failed for "${currentProj.name}":`, err);
+        }
+      };
+
+      const immediateTimer = setTimeout(runSync, 5000);
+      const intervalId = setInterval(runSync, ms);
+      intervals.push(immediateTimer, intervalId);
+    });
+
+    return () => {
+      intervals.forEach((id) => clearInterval(id));
+    };
+  }, [
+    accessToken,
+    user,
+    projects
+      .filter((p) => p.autoSyncEnabled)
+      .map((p) => `${p.id}-${p.autoSyncInterval}`)
+      .join(","),
+  ]);
 
   return (
     <div
