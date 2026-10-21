@@ -282,8 +282,7 @@ export default function AdminPanel({
     }
   };
 
-  // Load pending counts once on mount (admin only) so project cards can show
-  // their pending badge without the admin needing to visit the Upload tab.
+  // (pending queue removed — visitor photos go directly to galeri)
   useEffect(() => {
     if (userRole === "admin") {
     }
@@ -527,7 +526,7 @@ export default function AdminPanel({
       );
       const data = await res.json();
       if (data.success) {
-        setSuccessMsg(data.message || "Foto tes tersimpan ke antrian pending.");
+        setSuccessMsg(data.message || "Foto tes tersimpan ke galeri.");
         setCapturedTestPhoto(null);
         setTimeout(() => setSuccessMsg(""), 3000);
       } else {
@@ -1116,8 +1115,7 @@ export default function AdminPanel({
             <div className="space-y-1.5 animate-fadeIn">
               <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
                 Pengunjung dapat mengupload foto ke galeri via QR code upload.
-                Maksimal 5 foto per sesi. Foto disimpan untuk ditinjau admin
-                sebelum ditambahkan ke galeri.
+                Maksimal 5 foto per sesi. Foto langsung tampil di galeri.
               </p>
               {isEditing && editingId && (
                 <p className="text-[9.5px] text-[#D4AF37]/80 leading-normal font-sans flex items-center gap-1">

@@ -2,25 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSeed } from "@/lib/lihum";
 import {
   findProjectById,
-  addPendingUpload,
-  countPendingUploads,
+  addProjectPhotos,
+  updateProjectSync,
+  type NewPhotoInput,
 } from "@/lib/queries";
 
 // POST /api/projects/:id/visitor-upload
 //
 // "Upload Mandiri" — visitors upload photos directly to a galeri (no login
-// required). Photos are stored as base64 in the PendingUpload table for
-// admin review. Admin downloads them and manually adds to the Drive folder,
-// or deletes (rejects).
+// required). Photos are inserted DIRECTLY into the Photo table so they
+// appear immediately in the galeri — no admin review needed.
 //
-// Rate limited: max 5 photos per request, max ~15 photos per IP per 10 min.
-// Photos are expected to be pre-resized client-side (max 1600px, JPEG 0.8).
+// Rate limited: max photos per request (from global camera config).
+// Photos are expected to be pre-resized client-side (max 1600px, JPEG 0.82).
 
-const MAX_PHOTOS = 5;
 const MAX_BYTES_PER_PHOTO = 6 * 1024 * 1024; // 6MB base64 (≈4.5MB raw)
 
 // ── Best-effort in-memory rate limiter (per uploader IP) ──
-// Workers isolates are short-lived, so this is a soft limit.
 const ipBuckets = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX = 15;
@@ -77,12 +75,12 @@ export async function GET(
     id: project.id,
     name: project.name,
     allowVisitorUpload: !!project.allowVisitorUpload,
-    pendingCount: await countPendingUploads(id),
   });
 }
 
 // POST /api/projects/:id/visitor-upload
 // Public endpoint — visitors submit photos (base64, pre-resized client-side).
+// Photos go DIRECTLY into the Photo table — no admin review, no pending.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -110,12 +108,6 @@ export async function POST(
 
   if (photos.length === 0) {
     return NextResponse.json({ error: "Tidak ada foto untuk diupload." }, { status: 400 });
-  }
-  if (photos.length > MAX_PHOTOS) {
-    return NextResponse.json(
-      { error: `Maksimal ${MAX_PHOTOS} foto per upload.` },
-      { status: 400 }
-    );
   }
 
   // Validate each photo
@@ -153,46 +145,51 @@ export async function POST(
   incrementRateLimit(clientIp, photos.length);
 
   const galleryName = project.name;
-  const results: { name: string; success: boolean; error?: string }[] = [];
-  let stored = 0;
 
-  for (let i = 0; i < photos.length; i++) {
-    const photo = photos[i];
+  // Convert incoming photos to NewPhotoInput format — insert directly into
+  // the Photo table so they appear immediately in the galeri.
+  const photoInputs: NewPhotoInput[] = photos.map((photo, i) => {
     const ext = photo.fileName.match(/\.([^.]+)$/)?.[1] || "jpg";
     const cleanName = `${galleryName} - visitor-${Date.now()}-${i + 1}.${ext}`;
-    const uploadId = `pu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const approxBytes = Math.ceil((photo.base64Data.length * 3) / 4);
+    const sizeFormatted = approxBytes > 1048576
+      ? (approxBytes / 1048576).toFixed(1) + " MB"
+      : Math.ceil(approxBytes / 1024) + " KB";
+    const now = new Date().toISOString().split("T")[0];
 
-    try {
-      const approxBytes = Math.ceil((photo.base64Data.length * 3) / 4);
-      await addPendingUpload({
-        id: uploadId,
-        projectId: id,
-        fileName: cleanName,
-        mimeType: photo.mimeType,
-        base64Data: photo.base64Data,
-        size: approxBytes,
-        uploaderIp: clientIp,
-        createdAt: new Date().toISOString(),
-      });
-      results.push({ name: cleanName, success: true });
-      stored++;
-    } catch (err: any) {
-      results.push({
-        name: cleanName,
-        success: false,
-        error: err?.message?.slice(0, 120) || "DB error",
-      });
-    }
-  }
+    // Use a unique ID based on timestamp + random to avoid collision
+    const photoId = `visitor_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 10)}`;
 
-  return NextResponse.json({
-    success: stored > 0,
-    uploaded: stored,
-    failed: results.length - stored,
-    results,
-    message:
-      stored > 0
-        ? `${stored} foto berhasil dikirim! Foto akan ditinjau admin lalu ditambahkan ke galeri.`
-        : "Gagal menyimpan foto. Silakan coba lagi.",
+    return {
+      id: photoId,
+      name: cleanName,
+      mimeType: photo.mimeType,
+      thumbnailLink: "", // no thumbnail (visitor photos don't have Drive thumbnails)
+      webContentLink: "", // no Drive download link (stored in DB only)
+      size: sizeFormatted,
+      createdTime: now,
+      modifiedTime: now,
+    };
   });
+
+  try {
+    // Insert photos directly into Photo table — they appear in galeri immediately
+    await addProjectPhotos(id, photoInputs);
+
+    // Update photoCount on the project
+    const newCount = project.photoCount + photoInputs.length;
+    await updateProjectSync(id, newCount, new Date().toISOString());
+
+    return NextResponse.json({
+      success: true,
+      uploaded: photoInputs.length,
+      failed: 0,
+      message: `${photoInputs.length} foto berhasil diupload! Foto sudah tampil di galeri.`,
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message?.slice(0, 120) || "Gagal menyimpan foto." },
+      { status: 500 }
+    );
+  }
 }
