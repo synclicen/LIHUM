@@ -228,93 +228,12 @@ export default function App() {
     return () => clearInterval(fetchMetadataInterval);
   }, []);
 
-  // Automated background sync scheduler for projects with autoSyncEnabled = true.
-  // Uses a ref for projects so the interval callback always reads the latest
-  // project list WITHOUT causing the effect to re-run and reset the interval.
-  // Otherwise, loadProjects() (called every 15s) would change `projects`,
-  // re-run this effect, clear the interval, and never let the first sync fire.
-  const projectsRef = useRef<ProjectSummary[]>([]);
-  useEffect(() => {
-    projectsRef.current = projects;
-  }, [projects]);
-
-  useEffect(() => {
-    if (!accessToken || !user) return;
-
-    // Compute a stable signature of which projects need auto-sync.
-    // Only re-create intervals when the set of synced projects or their
-    // intervals actually change (not when photoCount/lastSyncedAt update).
-    const syncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
-    if (syncedProjects.length === 0) return;
-
-    const intervals: ReturnType<typeof setInterval>[] = [];
-
-    syncedProjects.forEach((proj) => {
-      let ms = 180000;
-      switch (proj.autoSyncInterval) {
-        case "30s":
-          ms = 30000;
-          break;
-        case "1m":
-          ms = 60000;
-          break;
-        case "3m":
-          ms = 180000;
-          break;
-        case "5m":
-          ms = 300000;
-          break;
-        case "1h":
-          ms = 3600000;
-          break;
-        case "6h":
-          ms = 21600000;
-          break;
-      }
-
-      const runSync = async () => {
-        // Read the latest access token from a ref (in case it refreshed).
-        const currentProj = projectsRef.current.find((p) => p.id === proj.id);
-        if (!currentProj || !currentProj.autoSyncEnabled) return;
-
-        try {
-          console.log(`[Auto-Sync] Syncing "${currentProj.name}" (${currentProj.autoSyncInterval})...`);
-          const res = await fetch(`/api/projects/${proj.id}/sync`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "x-user-email": user.email || "",
-            },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            console.log(`[Auto-Sync] Done "${currentProj.name}": ${data.photoCount} photos`);
-            loadProjects();
-          }
-        } catch (err) {
-          console.error(`[Auto-Sync] Failed for "${currentProj.name}":`, err);
-        }
-      };
-
-      // Fire immediately on mount (so realtime sync kicks in right away),
-      // then on the interval. Use setTimeout for the immediate fire so it
-      // doesn't block the initial render.
-      const immediateTimer = setTimeout(runSync, 2000);
-      const intervalId = setInterval(runSync, ms);
-      intervals.push(immediateTimer, intervalId);
-    });
-
-    return () => {
-      intervals.forEach((id) => clearInterval(id));
-    };
-  }, [
-    accessToken,
-    user,
-    projects
-      .filter((p) => p.autoSyncEnabled)
-      .map((p) => `${p.id}-${p.autoSyncInterval}`)
-      .join(","),
-  ]);
+  // ── Auto-sync DISABLED ──
+  // Previously: auto-sync ran every 30s-3m for all galleries with autoSyncEnabled.
+  // This caused D1 free tier writes to exceed 100K/day limit.
+  // Now: admin syncs manually via "Sinkron Drive" button in AdminPanel.
+  // autoSyncEnabled/autoSyncInterval columns remain in DB for backward compat
+  // but the scheduler is completely removed — 0 background writes.
 
   return (
     <div
