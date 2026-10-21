@@ -160,6 +160,9 @@ export async function ensureSchema(): Promise<void> {
         await ensureColumn("Project", "cameraCountdown", "INTEGER NOT NULL DEFAULT 3");
         await ensureColumn("Project", "cameraMirror", "INTEGER NOT NULL DEFAULT 1");
         await ensureColumn("Project", "cameraFacing", "TEXT NOT NULL DEFAULT 'environment'");
+        // autoHideDays: jika > 0, galeri otomatis di-hide + auto-sync dimatikan
+        // setelah X hari dari createdAt. 0 = tidak pernah auto-hide.
+        await ensureColumn("Project", "autoHideDays", "INTEGER NOT NULL DEFAULT 0");
         await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
         await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
       } catch (writeErr: any) {

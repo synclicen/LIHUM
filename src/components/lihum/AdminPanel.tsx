@@ -93,6 +93,7 @@ export default function AdminPanel({
   const [autoSyncInterval, setAutoSyncInterval] = useState<
     "30s" | "1m" | "3m" | "5m" | "1h" | "6h"
   >("3m");
+  const [autoHideDays, setAutoHideDays] = useState(0);
 
   // Account form/management states
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -168,6 +169,7 @@ export default function AdminPanel({
     setAutoSyncEnabled(false);
     setAutoFilterEnabled(false);
     setAutoSyncInterval("3m");
+    setAutoHideDays(0);
     setAdditionalFolders([]);
     setNewFolderUrl("");
     setNewFolderLabel("");
@@ -187,6 +189,7 @@ export default function AdminPanel({
     setAutoSyncEnabled(!!project.autoSyncEnabled);
     setAutoFilterEnabled(!!project.autoFilterEnabled);
     setAutoSyncInterval((project.autoSyncInterval as "30s" | "1m" | "3m" | "5m" | "1h" | "6h") || "3m");
+    setAutoHideDays((project as any).autoHideDays ?? 0);
     setAllowVisitorUpload(!!project.allowVisitorUpload);
     setErrorMsg("");
     setNewFolderUrl("");
@@ -591,6 +594,7 @@ export default function AdminPanel({
           autoFilterEnabled,
           autoSyncEnabled,
           autoSyncInterval,
+          autoHideDays,
           allowVisitorUpload,
         }),
       });
@@ -1312,6 +1316,41 @@ export default function AdminPanel({
               </p>
             </div>
           )}
+
+            {/* Auto-hide gallery after X days */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                Sembunyikan Otomatis
+              </label>
+              <select
+                value={autoHideDays}
+                onChange={(e) => setAutoHideDays(parseInt(e.target.value))}
+                className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
+              >
+                <option className="bg-[#120A21]" value={0}>
+                  Tidak Pernah
+                </option>
+                <option className="bg-[#120A21]" value={7}>
+                  Setelah 1 Minggu
+                </option>
+                <option className="bg-[#120A21]" value={14}>
+                  Setelah 2 Minggu
+                </option>
+                <option className="bg-[#120A21]" value={30}>
+                  Setelah 1 Bulan
+                </option>
+                <option className="bg-[#120A21]" value={90}>
+                  Setelah 3 Bulan
+                </option>
+                <option className="bg-[#120A21]" value={180}>
+                  Setelah 6 Bulan
+                </option>
+              </select>
+              <p className="text-[9.5px] text-slate-400 leading-normal font-sans mt-1">
+                Galeri otomatis disembunyikan dari publik + auto-sync dimatikan
+                setelah jangka waktu ini. Admin tetap bisa lihat &amp; buka kembali.
+              </p>
+            </div>
         </div>
 
         <div className="flex space-x-2 pt-2">

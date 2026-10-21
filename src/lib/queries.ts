@@ -21,6 +21,7 @@ export interface ProjectRow {
   allowVisitorUpload: number; // 0 | 1
   viewCount: number; // visitor page views
   downloadCount: number; // photo downloads
+  autoHideDays: number; // 0 = never, >0 = hide after X days
   autoSyncEnabled: number; // 0 | 1
   autoSyncInterval: string;
   lastSyncedAt: string;
@@ -62,6 +63,7 @@ export interface NewProjectInput {
   isHidden: boolean;
   autoFilterEnabled: boolean;
   allowVisitorUpload: boolean;
+  autoHideDays: number;
   autoSyncEnabled: boolean;
   autoSyncInterval: string;
   createdAt: string;
@@ -78,6 +80,7 @@ export interface UpdateProjectInput {
   isHidden?: boolean;
   autoFilterEnabled?: boolean;
   allowVisitorUpload?: boolean;
+  autoHideDays?: number;
   autoSyncEnabled?: boolean;
   autoSyncInterval?: string;
   lastSyncedAt?: string;
@@ -118,6 +121,7 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   allowVisitorUpload: Number(r.allowVisitorUpload ?? 0),
   viewCount: Number(r.viewCount ?? 0),
   downloadCount: Number(r.downloadCount ?? 0),
+  autoHideDays: Number(r.autoHideDays ?? 0),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
@@ -257,8 +261,8 @@ export async function resetAiHidden(projectId: string): Promise<number> {
 
 export async function createProject(input: NewProjectInput): Promise<ProjectRow> {
   await db.execute({
-    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, visibility, password, isHidden, autoFilterEnabled, allowVisitorUpload, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO Project (id, name, description, driveFolderUrl, driveFolderId, displayMode, visibility, password, isHidden, autoFilterEnabled, allowVisitorUpload, autoHideDays, autoSyncEnabled, autoSyncInterval, lastSyncedAt, photoCount, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?)`,
     args: [
       input.id,
       input.name,
@@ -271,10 +275,9 @@ export async function createProject(input: NewProjectInput): Promise<ProjectRow>
       input.isHidden ? 1 : 0,
       input.autoFilterEnabled ? 1 : 0,
       input.allowVisitorUpload ? 1 : 0,
+      input.autoHideDays ?? 0,
       input.autoSyncEnabled ? 1 : 0,
       input.autoSyncInterval,
-      "",
-      0,
       input.createdAt,
     ],
   });
@@ -321,12 +324,16 @@ export async function updateProject(
           ? 1
           : 0
         : existing.autoSyncEnabled,
+    autoHideDays:
+      input.autoHideDays !== undefined
+        ? input.autoHideDays
+        : existing.autoHideDays,
     autoSyncInterval: input.autoSyncInterval ?? existing.autoSyncInterval,
     lastSyncedAt: input.lastSyncedAt !== undefined ? input.lastSyncedAt : existing.lastSyncedAt,
   };
 
   await db.execute({
-    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, visibility=?, password=?, isHidden=?, autoFilterEnabled=?, allowVisitorUpload=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
+    sql: `UPDATE Project SET name=?, description=?, driveFolderUrl=?, driveFolderId=?, displayMode=?, visibility=?, password=?, isHidden=?, autoFilterEnabled=?, allowVisitorUpload=?, autoHideDays=?, autoSyncEnabled=?, autoSyncInterval=?, lastSyncedAt=? WHERE id=?`,
     args: [
       merged.name,
       merged.description,
@@ -338,6 +345,7 @@ export async function updateProject(
       merged.isHidden,
       merged.autoFilterEnabled,
       merged.allowVisitorUpload,
+      merged.autoHideDays,
       merged.autoSyncEnabled,
       merged.autoSyncInterval,
       merged.lastSyncedAt,

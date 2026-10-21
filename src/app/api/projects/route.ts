@@ -25,6 +25,7 @@ function summaryOut(p: ProjectRow) {
     viewCount: p.viewCount,
     downloadCount: p.downloadCount,
     autoSyncEnabled: toBool(p.autoSyncEnabled),
+    autoHideDays: p.autoHideDays,
     autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
     photoCount: p.photoCount,
@@ -35,14 +36,37 @@ function summaryOut(p: ProjectRow) {
 // GET /api/projects — lightweight summaries.
 // Admins/managers see ALL galleries (including hidden ones, for management).
 // Public visitors only see non-hidden galleries.
+// Auto-hide: galleries with autoHideDays > 0 that have passed their expiry
+// are treated as hidden (isHidden=true, autoSyncEnabled=false) at READ time.
+// No writes needed — the check is computed on-the-fly from createdAt + autoHideDays.
 export async function GET(req: NextRequest) {
   await ensureSeed();
   const userEmail = req.headers.get("x-user-email") || undefined;
   const role = await getAccountRole(userEmail);
-  const projects =
+  let projects =
     role !== null
       ? await getAllProjectSummaries() // admin/manager: see all
       : await getVisibleProjectSummaries(); // public: exclude hidden
+
+  // Auto-hide check: if autoHideDays > 0 and (now - createdAt) > autoHideDays,
+  // treat as hidden + disable auto-sync. No DB write — computed at read time.
+  const now = Date.now();
+  projects = projects.map((p) => {
+    if (p.autoHideDays > 0 && p.createdAt) {
+      const createdMs = new Date(p.createdAt).getTime();
+      const expiredMs = createdMs + p.autoHideDays * 86400000;
+      if (now > expiredMs) {
+        return { ...p, isHidden: 1, autoSyncEnabled: 0 };
+      }
+    }
+    return p;
+  });
+
+  // For public visitors, filter out hidden (including auto-hidden) galleries
+  if (role === null) {
+    projects = projects.filter((p) => p.isHidden === 0);
+  }
+
   return NextResponse.json(projects.map(summaryOut));
 }
 
@@ -68,6 +92,7 @@ export async function POST(req: NextRequest) {
     password,
     autoFilterEnabled,
     allowVisitorUpload,
+    autoHideDays,
     autoSyncEnabled,
     autoSyncInterval,
   } = body;
@@ -130,6 +155,7 @@ export async function POST(req: NextRequest) {
     isHidden: false, // new galleries are visible by default
     autoFilterEnabled: autoFilterEnabled === true,
     allowVisitorUpload: allowVisitorUpload === true,
+    autoHideDays: typeof autoHideDays === "number" ? autoHideDays : 0,
     autoSyncEnabled: autoSyncEnabled === true,
     autoSyncInterval: autoSyncInterval || "3m",
     createdAt: new Date().toISOString().split("T")[0],
