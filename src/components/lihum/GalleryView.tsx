@@ -251,7 +251,7 @@ export default function GalleryView({
       }
     };
 
-    const intervalId = setInterval(fetchUpdates, 30000);
+    const intervalId = setInterval(fetchUpdates, 60000); // 60s (was 30s) — reduce CPU
     return () => clearInterval(intervalId);
   }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, project?.photoCount, sortBy]);
 

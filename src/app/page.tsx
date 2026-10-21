@@ -223,21 +223,23 @@ export default function App() {
       if (document.visibilityState === "visible") {
         loadProjects();
       }
-    }, 30000);
+    }, 60000); // 60s (was 30s) — reduce CPU usage
 
     return () => clearInterval(fetchMetadataInterval);
   }, []);
 
   // ── Auto-sync scheduler ──
-  // Runs for galleries with autoSyncEnabled=true. With delta-only sync
-  // (replaceProjectPhotos skips writes when 0 changes), each sync produces
-  // 0 D1 writes when nothing changed — only reads.
+  // DISABLED: 40 galleries with 30s interval caused Workers CPU limit exceeded.
+  // Each sync = multiple Google Drive API calls (CPU-heavy) + D1 reads.
+  // 40 × 30s = 115,200 syncs/day × ~5 fetch calls = 576,000 Drive API calls/day.
   //
-  // LIMIT: admin should keep max 5 galleries with auto-sync enabled per day
-  // to stay safely within D1 free tier (100K writes/day = ~20,000 foto baru
-  // per galeri per hari). Admin manages this manually.
+  // Admin should sync manually via "Sinkron Drive" button.
+  // To re-enable: admin sets autoSyncEnabled=true per gallery (max 5 galleries).
+  // The scheduler below is kept but only activates when admin is logged in
+  // AND has galleries with autoSyncEnabled=true.
   //
-  // Reads per sync: ~3 (findProjectById + getProjectFolders + replaceProjectPhotos SELECT)
+  // After D1 reset, run: UPDATE Project SET autoSyncEnabled=0 WHERE autoSyncInterval='30s'
+  // to convert all 30s intervals to manual (admin can re-enable specific galleries).
   const projectsRef = useRef<ProjectSummary[]>([]);
   useEffect(() => {
     projectsRef.current = projects;
@@ -246,8 +248,15 @@ export default function App() {
   useEffect(() => {
     if (!accessToken || !user) return;
 
-    const syncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
-    if (syncedProjects.length === 0) return;
+    const allSyncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
+    if (allSyncedProjects.length === 0) return;
+
+    // SAFETY: limit to max 5 galleries to avoid CPU/D1 quota issues.
+    // If admin has more than 5 enabled, only sync the first 5.
+    const syncedProjects = allSyncedProjects.slice(0, 5);
+    if (allSyncedProjects.length > 5) {
+      console.warn(`[Auto-Sync] ${allSyncedProjects.length} galleries have auto-sync enabled, but only 5 will be synced (D1/CPU limit). Disable others or use manual sync.`);
+    }
 
     const intervals: ReturnType<typeof setInterval>[] = [];
 
