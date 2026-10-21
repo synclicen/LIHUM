@@ -234,7 +234,9 @@ export default function AdminPanel({
         headers: { "x-user-email": userEmail },
       });
       if (!res.ok) throw new Error("Gagal memuat pengaturan kamera.");
-      const data = await res.json();
+      const text = await res.text();
+      if (!text) throw new Error("Empty response (D1 writes blocked?)");
+      const data = JSON.parse(text);
       setCameraFilter(data.filter || "original");
       setCameraAspectRatio(data.aspectRatio || "4:3");
       setCameraCountdown(typeof data.countdown === "number" ? data.countdown : 3);
