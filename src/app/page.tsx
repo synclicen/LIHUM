@@ -231,14 +231,13 @@ export default function App() {
   // ── Auto-sync scheduler ──
   // Runs for galleries with autoSyncEnabled=true. With delta-only sync
   // (replaceProjectPhotos skips writes when 0 changes), each sync produces
-  // 0 D1 writes when nothing changed — only reads. So auto-sync is safe
-  // for D1 free tier (100K writes/day).
+  // 0 D1 writes when nothing changed — only reads.
   //
-  // Writes only happen when photos actually change in Drive (new/removed):
-  // ~5 writes/day total across all galleries.
+  // LIMIT: admin should keep max 5 galleries with auto-sync enabled per day
+  // to stay safely within D1 free tier (100K writes/day = ~20,000 foto baru
+  // per galeri per hari). Admin manages this manually.
   //
   // Reads per sync: ~3 (findProjectById + getProjectFolders + replaceProjectPhotos SELECT)
-  // 52 galleries × 5m interval = 14,976 syncs/day × 3 reads = 44,928 reads/day (0.9% of 5M limit)
   const projectsRef = useRef<ProjectSummary[]>([]);
   useEffect(() => {
     projectsRef.current = projects;
@@ -253,8 +252,17 @@ export default function App() {
     const intervals: ReturnType<typeof setInterval>[] = [];
 
     syncedProjects.forEach((proj) => {
-      let ms = 300000; // default 5m (minimum)
+      let ms = 180000;
       switch (proj.autoSyncInterval) {
+        case "30s":
+          ms = 30000;
+          break;
+        case "1m":
+          ms = 60000;
+          break;
+        case "3m":
+          ms = 180000;
+          break;
         case "5m":
           ms = 300000;
           break;
@@ -264,10 +272,6 @@ export default function App() {
         case "6h":
           ms = 21600000;
           break;
-        // 30s, 1m, 3m are no longer supported — treated as 5m minimum
-        // to stay within D1 free tier limits.
-        default:
-          ms = 300000;
       }
 
       const runSync = async () => {
