@@ -134,35 +134,49 @@ let seedPromise: Promise<void> | null = null;
 /**
  * Idempotently creates the schema and seeds default galleries + admin account.
  * Safe to call on every request — only inserts when tables are empty.
- * Concurrent calls are deduplicated.
+ * Concurrent calls are deduplicated PER ISOLATE.
+ *
+ * CRITICAL: In production (D1), tables always exist + data always exists.
+ * So this function does: 1 ensureSchema (1 READ) + 2 COUNT queries (2 READs)
+ * = 3 D1 reads per new isolate, 0 writes. Cached after first call.
  */
 export async function ensureSeed(): Promise<void> {
   if (seedPromise) return seedPromise;
   const p = (async () => {
     await ensureSchema();
 
-    if ((await countProjects()) === 0) {
-      for (const p of DEFAULT_PROJECTS) {
-        await createProject(p);
-        await addProjectPhotos(p.id, SAMPLE_PHOTOS_LUMINA);
-        // keep photoCount in sync on the Project row
-        const { updateProjectSync } = await import("@/lib/queries");
-        await updateProjectSync(p.id, SAMPLE_PHOTOS_LUMINA.length, "");
+    // Only seed if DB is completely empty (fresh database).
+    // Production always has data, so this never triggers writes.
+    const projectCount = await countProjects();
+    if (projectCount === 0) {
+      try {
+        for (const p of DEFAULT_PROJECTS) {
+          await createProject(p);
+          await addProjectPhotos(p.id, SAMPLE_PHOTOS_LUMINA);
+          const { updateProjectSync } = await import("@/lib/queries");
+          await updateProjectSync(p.id, SAMPLE_PHOTOS_LUMINA.length, "");
+        }
+      } catch (writeErr: any) {
+        console.warn("[ensureSeed] Seed writes skipped:", writeErr?.message?.slice(0, 80));
       }
     }
 
-    if ((await countAccounts()) === 0) {
-      await createAccounts(DEFAULT_ACCOUNTS);
+    const accountCount = await countAccounts();
+    if (accountCount === 0) {
+      try {
+        await createAccounts(DEFAULT_ACCOUNTS);
+      } catch (writeErr: any) {
+        console.warn("[ensureSeed] Account seed skipped:", writeErr?.message?.slice(0, 80));
+      }
     }
   })();
-  // Cache for the isolate's lifetime. Seed data only changes via code deploy
-  // (new isolate). On failure, clear so the next request retries.
   seedPromise = p;
   try {
     await p;
   } catch (err) {
     seedPromise = null;
-    throw err;
+    // Don't re-throw — let reads work even if seed/schema failed
+    console.warn("[ensureSeed] Failed but continuing:", err?.message?.slice(0, 80));
   }
 }
 

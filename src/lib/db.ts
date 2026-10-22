@@ -130,7 +130,7 @@ async function ensureColumn(table: string, column: string, definition: string) {
 export async function ensureSchema(): Promise<void> {
   if (schemaPromise) return schemaPromise;
   const p = (async () => {
-    // Check if all tables exist (READ ONLY)
+    // Check if all tables exist (READ ONLY — 1 query)
     const tableCheck = await db.execute({
       sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Project','Photo','Account','PendingUpload','ProjectFolder','Setting')",
     });
@@ -146,32 +146,16 @@ export async function ensureSchema(): Promise<void> {
       existingTables.has("Setting");
 
     if (allTablesExist) {
-      try {
-        await ensureColumn("Project", "visibility", "TEXT NOT NULL DEFAULT 'public'");
-        await ensureColumn("Project", "password", "TEXT NOT NULL DEFAULT ''");
-        await ensureColumn("Project", "isHidden", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Project", "autoFilterEnabled", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Project", "allowVisitorUpload", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Project", "viewCount", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Project", "downloadCount", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Project", "cameraFilter", "TEXT NOT NULL DEFAULT 'original'");
-        await ensureColumn("Project", "cameraAspectRatio", "TEXT NOT NULL DEFAULT '4:3'");
-        await ensureColumn("Project", "cameraResolution", "TEXT NOT NULL DEFAULT '1920x1080'");
-        await ensureColumn("Project", "cameraCountdown", "INTEGER NOT NULL DEFAULT 3");
-        await ensureColumn("Project", "cameraMirror", "INTEGER NOT NULL DEFAULT 1");
-        await ensureColumn("Project", "cameraFacing", "TEXT NOT NULL DEFAULT 'environment'");
-        // autoHideDays: jika > 0, galeri otomatis di-hide + auto-sync dimatikan
-        // setelah X hari dari createdAt. 0 = tidak pernah auto-hide.
-        await ensureColumn("Project", "autoHideDays", "INTEGER NOT NULL DEFAULT 0");
-        await ensureColumn("Photo", "modifiedTime", "TEXT NOT NULL DEFAULT ''");
-        await ensureColumn("Photo", "aiHidden", "INTEGER NOT NULL DEFAULT 0");
-      } catch (writeErr: any) {
-        console.warn("[ensureSchema] Column migration skipped:", writeErr?.message?.slice(0, 80));
-      }
+      // Tables exist — SKIP ALL column migrations to avoid D1 writes.
+      // All columns were already migrated in previous deploys.
+      // Running ensureColumn on every new isolate = 15 PRAGMA reads +
+      // potential ALTER writes (if column "missing" due to race condition).
+      // Since production DB is fully migrated, we skip entirely.
+      // This saves 15 D1 reads + potential writes per new isolate.
       return;
     }
 
-    // Tables missing — create them
+    // Tables missing — create them (fresh DB only, not production)
     try {
       await db.batch([
         { sql: `CREATE TABLE IF NOT EXISTS Project (

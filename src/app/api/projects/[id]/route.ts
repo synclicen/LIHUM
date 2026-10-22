@@ -133,10 +133,9 @@ export async function GET(
   // Count a "view" only when a visitor opens the gallery for the first time
   // in this session (offset=0), NOT on every pagination/scroll fetch.
   // Admins/managers opening the gallery don't inflate the counter.
+  // Fire-and-forget: if D1 writes are blocked (quota), this fails silently.
   if (!isAdmin && offsetParam === 0) {
-    incrementProjectViews(id).catch((err) =>
-      console.warn("[Views] Failed to increment:", err)
-    );
+    incrementProjectViews(id).catch(() => {});
   }
 
   return NextResponse.json({
