@@ -377,91 +377,37 @@ export async function updateProjectSync(
 }
 
 /**
- * BATCHED view counter — buffers increments in memory and flushes to DB
- * periodically to reduce D1 write load (free plan = 100K rows/day).
- * Without batching: 1 write per visitor page view = ~500 writes/day
- * With batching (flush every 30s or 50 views): ~10 writes/day (98% reduction)
+ * View counter — writes IMMEDIATELY (not batched).
+ * Batching caused views to be lost because Worker isolates die before
+ * the 30s flush timer fires. Direct write is simpler and reliable.
+ * 1 write per visitor page view = ~500 writes/day = 0.5% of 100K limit. Safe.
  */
-const viewBuffer = new Map<string, number>();
-let viewFlushTimer: ReturnType<typeof setTimeout> | null = null;
-const VIEW_FLUSH_INTERVAL_MS = 30000;
-const VIEW_FLUSH_THRESHOLD = 50;
-
-async function flushViewBuffer(): Promise<void> {
-  if (viewBuffer.size === 0) return;
-  const entries = Array.from(viewBuffer.entries());
-  viewBuffer.clear();
-  const stmts = entries.map(([id, count]) => ({
-    sql: "UPDATE Project SET viewCount = viewCount + ? WHERE id = ?",
-    args: [count, id],
-  }));
-  try {
-    await db.batch(stmts);
-  } catch (err) {
-    console.warn("[Views] Flush failed, re-buffering:", err);
-    for (const [id, count] of entries) {
-      viewBuffer.set(id, (viewBuffer.get(id) || 0) + count);
-    }
-  }
-}
-
 export async function incrementProjectViews(id: string): Promise<void> {
-  viewBuffer.set(id, (viewBuffer.get(id) || 0) + 1);
-  const totalBuffered = Array.from(viewBuffer.values()).reduce((a, b) => a + b, 0);
-  if (totalBuffered >= VIEW_FLUSH_THRESHOLD) {
-    if (viewFlushTimer) { clearTimeout(viewFlushTimer); viewFlushTimer = null; }
-    await flushViewBuffer();
-    return;
-  }
-  if (!viewFlushTimer) {
-    viewFlushTimer = setTimeout(() => {
-      viewFlushTimer = null;
-      flushViewBuffer().catch(() => {});
-    }, VIEW_FLUSH_INTERVAL_MS);
+  try {
+    await db.execute({
+      sql: "UPDATE Project SET viewCount = viewCount + 1 WHERE id = ?",
+      args: [id],
+    });
+  } catch {
+    // D1 writes blocked (quota) — fail silently, view not counted
   }
 }
 
 /**
- * BATCHED download counter — same strategy as view counter.
+ * Download counter — writes IMMEDIATELY.
  */
-const downloadBuffer = new Map<string, number>();
-let downloadFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-async function flushDownloadBuffer(): Promise<void> {
-  if (downloadBuffer.size === 0) return;
-  const entries = Array.from(downloadBuffer.entries());
-  downloadBuffer.clear();
-  const stmts = entries.map(([id, count]) => ({
-    sql: "UPDATE Project SET downloadCount = downloadCount + ? WHERE id = ?",
-    args: [count, id],
-  }));
-  try {
-    await db.batch(stmts);
-  } catch (err) {
-    console.warn("[Downloads] Flush failed, re-buffering:", err);
-    for (const [id, count] of entries) {
-      downloadBuffer.set(id, (downloadBuffer.get(id) || 0) + count);
-    }
-  }
-}
-
 export async function incrementProjectDownloads(
   id: string,
   count: number = 1
 ): Promise<void> {
   if (count <= 0) return;
-  downloadBuffer.set(id, (downloadBuffer.get(id) || 0) + count);
-  const totalBuffered = Array.from(downloadBuffer.values()).reduce((a, b) => a + b, 0);
-  if (totalBuffered >= VIEW_FLUSH_THRESHOLD) {
-    if (downloadFlushTimer) { clearTimeout(downloadFlushTimer); downloadFlushTimer = null; }
-    await flushDownloadBuffer();
-    return;
-  }
-  if (!downloadFlushTimer) {
-    downloadFlushTimer = setTimeout(() => {
-      downloadFlushTimer = null;
-      flushDownloadBuffer().catch(() => {});
-    }, VIEW_FLUSH_INTERVAL_MS);
+  try {
+    await db.execute({
+      sql: "UPDATE Project SET downloadCount = downloadCount + ? WHERE id = ?",
+      args: [count, id],
+    });
+  } catch {
+    // D1 writes blocked — fail silently
   }
 }
 
