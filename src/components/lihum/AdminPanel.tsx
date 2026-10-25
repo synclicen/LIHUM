@@ -1261,7 +1261,22 @@ export default function AdminPanel({
               <input
                 type="checkbox"
                 checked={autoSyncEnabled}
-                onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    const syncCount = projects.filter((p) => p.autoSyncEnabled).length;
+                    if (syncCount >= 5) {
+                      setErrorMsg(
+                        `Batas maksimal 5 galeri dengan auto-sync telah tercapai (${syncCount}/5). ` +
+                        `Nonaktifkan auto-sync pada galeri lain terlebih dahulu sebelum mengaktifkan yang ini.`
+                      );
+                      return;
+                    }
+                    setSuccessMsg(`Auto-sync diaktifkan (${syncCount + 1}/5).`);
+                    setTimeout(() => setSuccessMsg(""), 3000);
+                  }
+                  setAutoSyncEnabled(e.target.checked);
+                  setErrorMsg("");
+                }}
                 className="sr-only peer"
               />
               <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors"></div>
@@ -1270,6 +1285,23 @@ export default function AdminPanel({
               </span>
             </label>
           </div>
+
+          {/* Auto-sync limit indicator */}
+          {(() => {
+            const syncCount = projects.filter((p) => p.autoSyncEnabled).length;
+            return (
+              <div className={`text-[9px] flex items-center justify-between px-2 py-1 rounded-lg ${
+                syncCount >= 5
+                  ? "bg-red-500/10 border border-red-500/25 text-red-300"
+                  : syncCount >= 3
+                  ? "bg-amber-500/10 border border-amber-500/25 text-amber-300"
+                  : "bg-[#1F0F3D]/30 text-slate-500"
+              }`}>
+                <span>Auto-sync aktif: <strong className="font-mono">{syncCount}/5</strong> galeri</span>
+                {syncCount >= 5 && <span className="font-bold">⚠ Batas tercapai</span>}
+              </div>
+            );
+          })()}
 
           {autoSyncEnabled && (
             <div className="space-y-1.5 animate-fadeIn">
@@ -1623,6 +1655,14 @@ export default function AdminPanel({
                                   })`
                                 : "Mati"}
                             </span>
+                            {project.autoSyncEnabled && (
+                              <span className="ml-2 text-[8px] px-1.5 py-0.5 rounded-full bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-bold">
+                                {(() => {
+                                  const idx = projects.filter((p) => p.autoSyncEnabled).findIndex((p) => p.id === project.id);
+                                  return idx < 5 ? `#${idx + 1}` : "OVER LIMIT";
+                                })()}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
