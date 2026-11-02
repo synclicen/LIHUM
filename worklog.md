@@ -845,3 +845,120 @@ Stage Summary:
   - ✅ D1 writes: 0 when unchanged = aman selamanya
   - ℹ️ Admin needs to re-enable auto-sync per gallery (was disabled to stop quota bleed)
   - ℹ️ Future enhancement: Google Drive Push Notifications (webhooks) for instant 0-polling updates
+
+---
+Task ID: 30
+Agent: main (Z.ai Code)
+Task: Implement Google Drive Push Notifications (webhook) for near-instant sync.
+
+Architecture: Google Drive → webhook → needsSync flag → 60s checker → delta sync
+  1. Admin registers a watch channel (POST /api/drive-watch)
+     → calls Google changes/watch with their OAuth token
+     → Google sends "sync" confirmation to /api/drive-webhook
+  2. When ANY file in admin's Drive changes, Google POSTs to /api/drive-webhook
+     → we verify X-Goog-Channel-Token against stored token (security)
+     → mark needsSync=1 on all admin's auto-sync galleries (1 D1 write)
+  3. Admin's browser checks /api/needs-sync every 60s
+     → if any project has needsSync=1, triggers immediate delta-sync
+     → true-delta sync: 0 writes if nothing actually changed in gallery photos
+  4. Channels expire after 23h, auto-renewed by browser effect (every 5m check)
+
+Backend changes:
+  - prisma/schema.prisma: added needsSync column to Project + DriveWatchChannel model
+  - src/lib/db.ts: added DriveWatchChannel table creation + needsSync column migration
+  - src/lib/queries.ts: added DriveWatchChannelRow type, CRUD functions
+    (getWatchChannel, upsertWatchChannel, deleteWatchChannel, findWatchChannelById,
+     markProjectNeedsSync, markAllAutoSyncProjectsNeedSync, clearNeedsSync,
+     getProjectsNeedingSync)
+  - src/lib/drive-sync.ts: clearNeedsSync() after sync completes (prevents re-sync loops)
+
+New API routes:
+  - POST /api/drive-watch — register/renew channel via Google changes/watch
+    (calls startPageToken + changes/watch, stores channel in D1)
+  - GET /api/drive-watch — check channel status + expiration + needsRenewal
+  - DELETE /api/drive-watch — stop channel (calls Google channels/stop)
+  - POST /api/drive-webhook — Google calls this on Drive changes
+    (verifies token, marks needsSync=1 on all auto-sync galleries)
+  - GET /api/drive-webhook — health check
+  - GET /api/needs-sync — returns list of project IDs needing sync (polled every 60s)
+
+Frontend changes:
+  - src/app/page.tsx: added 60s needsSync checker (separate useEffect)
+    → polls /api/needs-sync every 60s
+    → triggers immediate delta-sync for each flagged gallery
+    → 0 writes when Drive change didn't affect gallery photos (true delta)
+    → skips when tab not visible (saves Workers requests)
+  - src/components/lihum/AdminPanel.tsx:
+    → added driveWatch status state + fetchDriveWatchStatus/registerDriveWatch/unregisterDriveWatch
+    → auto-register when admin saves a gallery with auto-sync ON
+    → auto-renewal: polls status every 5m, renews if within 2h of expiry
+    → UI: Push Notification status card (active/expired/inactive badge + countdown
+      + manual Aktifkan/Nonaktifkan buttons + error display)
+  - src/app/layout.tsx: added Google site verification meta tag support
+    (conditional on GOOGLE_SITE_VERIFICATION env var — for Search Console verification)
+  - src/types/index.ts: added needsSync field to ProjectSummary
+  - src/app/api/projects/route.ts + [id]/route.ts: include needsSync in response
+
+Security:
+  - Webhook verifies X-Goog-Channel-Token (32 random hex chars) against stored token
+  - Unknown channels return 200 (Google doesn't retry) but do nothing
+  - Token mismatch returns 403 (rejected)
+  - Drive-watch endpoints require admin/manager role (403 otherwise)
+  - needs-sync endpoint requires admin/manager role (403 otherwise)
+
+Cost analysis (with push notifications active):
+  - D1 reads: ~1,440/day (60s needs-sync check) + ~2,880/day (5m fallback) = 0.09% of 5M
+  - D1 writes: 0 when Drive unchanged; ~1 per webhook (markAllAutoSyncProjectsNeedSync)
+    + ~N per actual photo change (true delta). Even 100 Drive changes/day = <1% of 100K
+  - Workers requests: ~1,440/day (needs-sync) + ~288/day (5m fallback) = 1.7% of 100K
+  - Drive API calls: ~5/day (renewal) + ~N per actual sync = minimal
+  → AMAN SELAMANYA under free tier
+
+Deploy:
+  - Build OpenNext sukses (Worker 5098 KiB, gzip 1032 KiB)
+  - All 3 new routes in build: /api/drive-watch, /api/drive-webhook, /api/needs-sync
+  - wrangler deploy sukses (version c7d94322-c85f-492b-b365-b67a79c69de1)
+  - Deployed bundle verified: contains drive-watch, needs-sync, Push markers
+
+Verification (Agent Browser di produksi):
+  - Home HTTP 200 (0.33s), 58 galeri ✓
+  - Console errors: 0 ✓
+  - Network /sync POST calls (not logged in): 0 ✓
+  - Gallery click → 51 foto load ✓
+  - Footer sticky (atBottom: true) ✓
+  - Mobile 375px: h1 visible (275px), 58 gallery cards, footer at bottom ✓
+  - GET /api/drive-webhook → {ok: true, endpoint: "drive-webhook"} ✓
+  - POST /api/drive-webhook (test non-existent channel) → {ok: true, ignored: "unknown channel"} ✓
+  - GET /api/drive-watch (unauthorized) → 403 ✓
+  - GET /api/needs-sync (unauthorized) → 403 ✓
+  - needsSync field present in /api/projects response ✓
+
+What admin needs to do to activate Push Notifications:
+  1. Verify domain ownership in Google Search Console:
+     - Go to https://search.google.com/search-console
+     - Add property: https://lihum.synclicen.workers.dev
+     - Choose "HTML tag" verification method
+     - Copy the content value (e.g. "abc123...")
+     - Set it as GOOGLE_SITE_VERIFICATION in wrangler.jsonc vars + redeploy
+     - OR use DNS verification (no redeploy needed)
+  2. Add domain to OAuth consent screen authorized domains
+  3. Login as admin, enable auto-sync on a gallery
+  4. Click "Aktifkan Push" button in AdminPanel (or it auto-registers on save)
+  5. Keep the admin tab open — the 60s checker runs in that tab
+
+Note: D1 writes still blocked until 2026-11-03 00:00 UTC (~5h from deploy).
+The needsSync column migration will run automatically on the next request
+after midnight UTC. Until then, needsSync defaults to 0 (false) in the mapper,
+so the app works normally — push just can't set the flag yet.
+
+Stage Summary:
+  - ✅ Google Drive Push Notifications fully implemented (webhook + needsSync + 60s checker)
+  - ✅ 3 new API routes: /api/drive-watch, /api/drive-webhook, /api/needs-sync
+  - ✅ AdminPanel UI: status badge + countdown + manual control buttons
+  - ✅ Auto-register on auto-sync enable, auto-renewal before expiry
+  - ✅ Security: token verification on webhook, role checks on all endpoints
+  - ✅ Google site verification meta tag support (conditional on env var)
+  - ✅ Deployed + verified di produksi (version c7d94322)
+  - ✅ Cost: ~0.09% D1 reads, ~1.7% Workers requests — AMAN SELAMANYA
+  - ⚠️ Admin must verify domain in Google Search Console to activate push
+  - ⚠️ D1 writes blocked until midnight UTC (needsSync column migration pending)

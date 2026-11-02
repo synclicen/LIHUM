@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
+// Google Drive Push Notifications require the webhook domain to be verified
+// in Google Search Console. The admin verifies ownership by adding a meta
+// tag with a verification token (provided by Search Console) to the HTML.
+// Set GOOGLE_SITE_VERIFICATION in wrangler.jsonc vars or env to inject it.
+const googleSiteVerification = process.env.GOOGLE_SITE_VERIFICATION || "";
+
 export const metadata: Metadata = {
   title: "LIHUM: Lihat dan Unduh Mandiri",
   description:
@@ -25,6 +31,15 @@ export const metadata: Metadata = {
     siteName: "LIHUM",
     type: "website",
   },
+  // Injected only when GOOGLE_SITE_VERIFICATION env var is set.
+  // Required for Google Drive Push Notifications (domain verification step).
+  ...(googleSiteVerification
+    ? {
+        verification: {
+          google: googleSiteVerification,
+        },
+      }
+    : {}),
 };
 
 export default function RootLayout({

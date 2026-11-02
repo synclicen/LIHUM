@@ -1028,6 +1028,25 @@ export async function deleteWatchChannel(userEmail: string): Promise<void> {
   });
 }
 
+/**
+ * Finds a watch channel by its channel ID (used by the webhook receiver,
+ * which only has the X-Goog-Channel-ID header, not the userEmail).
+ */
+export async function findWatchChannelById(
+  channelId: string
+): Promise<{ userEmail: string; token: string } | null> {
+  const r = await db.execute({
+    sql: "SELECT userEmail, token FROM DriveWatchChannel WHERE id = ? LIMIT 1",
+    args: [channelId],
+  });
+  if (r.rows.length === 0) return null;
+  const row = r.rows[0] as Record<string, unknown>;
+  return {
+    userEmail: String(row.userEmail),
+    token: String(row.token ?? ""),
+  };
+}
+
 // ---------- needsSync flag (set by webhook, cleared by sync) ----------
 
 /**

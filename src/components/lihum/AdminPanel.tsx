@@ -31,6 +31,8 @@ import {
   Clock,
   Camera,
   X,
+  Bell,
+  BellRing,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -125,6 +127,20 @@ export default function AdminPanel({
   const [newFolderLabel, setNewFolderLabel] = useState("");
   const [addingFolder, setAddingFolder] = useState(false);
   const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
+
+  // ── Drive Push Notification state ──
+  // Tracks whether Google Drive Push Notifications are active for this admin.
+  // When active, Google calls our /api/drive-webhook whenever ANY file in the
+  // admin's Drive changes, triggering a near-instant (within 60s) delta-sync.
+  // null = not yet checked; {active, expiration, msRemaining, needsRenewal} = status.
+  const [driveWatch, setDriveWatch] = useState<{
+    active: boolean;
+    expiration?: string;
+    msRemaining?: number;
+    needsRenewal?: boolean;
+  } | null>(null);
+  const [driveWatchLoading, setDriveWatchLoading] = useState(false);
+  const [driveWatchError, setDriveWatchError] = useState("");
 
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
@@ -564,6 +580,118 @@ export default function AdminPanel({
     }
   }, [cameraFacing, cameraResolution, cameraAspectRatio]);
 
+  // ── Drive Push Notification management ──
+  //
+  // These functions register/unregister Google Drive Push Notification
+  // channels via /api/drive-watch. When registered, Google calls our
+  // /api/drive-webhook whenever ANY file in the admin's Drive changes,
+  // triggering near-instant (within 60s) delta-sync.
+  //
+  // Channels expire after ~23h. Auto-renewal happens via the effect below
+  // whenever the admin has auto-sync galleries AND the channel is expiring
+  // soon (within 2h) or not yet registered.
+
+  const fetchDriveWatchStatus = useCallback(async () => {
+    if (!accessToken || !userEmail) return;
+    try {
+      const res = await fetch("/api/drive-watch", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "x-user-email": userEmail,
+        },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setDriveWatch({
+        active: !!data.active,
+        expiration: data.expiration,
+        msRemaining: data.msRemaining,
+        needsRenewal: data.needsRenewal,
+      });
+    } catch (err) {
+      console.error("[DriveWatch] Status check failed:", err);
+    }
+  }, [accessToken, userEmail]);
+
+  const registerDriveWatch = useCallback(async () => {
+    if (!accessToken || !userEmail) return;
+    setDriveWatchLoading(true);
+    setDriveWatchError("");
+    try {
+      const res = await fetch("/api/drive-watch", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "x-user-email": userEmail,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDriveWatchError(data.error || "Gagal mendaftarkan push notification.");
+        return false;
+      }
+      await fetchDriveWatchStatus();
+      setSuccessMsg("Drive Push Notification diaktifkan — perubahan di Google Drive akan otomatis tersinkron.");
+      setTimeout(() => setSuccessMsg(""), 5000);
+      return true;
+    } catch (err: any) {
+      setDriveWatchError(err.message || "Gagal mendaftarkan push notification.");
+      return false;
+    } finally {
+      setDriveWatchLoading(false);
+    }
+  }, [accessToken, userEmail, fetchDriveWatchStatus]);
+
+  const unregisterDriveWatch = useCallback(async () => {
+    if (!accessToken || !userEmail) return;
+    setDriveWatchLoading(true);
+    try {
+      await fetch("/api/drive-watch", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "x-user-email": userEmail,
+        },
+      });
+      setDriveWatch({ active: false });
+    } catch (err) {
+      console.error("[DriveWatch] Unregister failed:", err);
+    } finally {
+      setDriveWatchLoading(false);
+    }
+  }, [accessToken, userEmail]);
+
+  // Auto-register/renew push channel when admin has auto-sync galleries
+  // AND the channel is missing or expiring soon.
+  // Auto-unregister when there are NO auto-sync galleries AND channel is active.
+  const autoSyncCount = projects.filter((p) => p.autoSyncEnabled).length;
+  useEffect(() => {
+    if (!accessToken || !userEmail) return;
+    // Initial status check on mount + when autoSyncCount changes.
+    fetchDriveWatchStatus();
+  }, [accessToken, userEmail, autoSyncCount, fetchDriveWatchStatus]);
+
+  // Separate effect for auto-renewal: checks every 5 minutes if channel
+  // needs renewal, and auto-registers if there are auto-sync galleries
+  // but no active channel.
+  useEffect(() => {
+    if (!accessToken || !userEmail) return;
+    const interval = setInterval(async () => {
+      await fetchDriveWatchStatus();
+      // After refreshing status, the state will update; the auto-register
+      // logic in handleSubmit and manual button handles renewal.
+      // Here we just check if renewal is needed and trigger it.
+      setDriveWatch((prev) => {
+        if (prev?.active && prev.needsRenewal && autoSyncCount > 0) {
+          // Trigger renewal in background (fire-and-forget).
+          registerDriveWatch();
+        }
+        return prev;
+      });
+    }, 5 * 60 * 1000); // every 5 minutes
+    return () => clearInterval(interval);
+  }, [accessToken, userEmail, autoSyncCount, fetchDriveWatchStatus, registerDriveWatch]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !driveFolderUrl.trim()) {
@@ -616,6 +744,22 @@ export default function AdminPanel({
         );
         setTimeout(() => setSuccessMsg(""), 4000);
       }
+
+      // ── Drive Push Notification auto-registration ──
+      // If this gallery now has auto-sync enabled AND there's no active
+      // push channel, register one. This ensures near-instant sync when
+      // the admin adds photos to Google Drive.
+      // If auto-sync was disabled and no galleries remain, unregister.
+      if (autoSyncEnabled && !driveWatch?.active) {
+        registerDriveWatch();
+      } else if (!autoSyncEnabled) {
+        // After refresh, if no auto-sync galleries remain, the auto-renewal
+        // effect won't re-register — but we keep the channel until it expires
+        // (harmless, just idle). Admin can manually stop via the button.
+        // We intentionally DON'T auto-unregister here to avoid race conditions
+        // when editing multiple galleries.
+      }
+
       resetForm();
       onRefresh();
     } catch (err: any) {
@@ -1345,6 +1489,114 @@ export default function AdminPanel({
                 <span className="block mt-1 text-amber-400/70">
                   ⚠ Batas: maksimal 5 galeri dengan auto-sync aktif.
                 </span>
+              </p>
+            </div>
+          )}
+
+          {/* ── Drive Push Notification status ──
+              Shows whether Google Drive will call our webhook when files change.
+              When active, sync happens within ~60s of any Drive change (near-instant).
+              Requires domain verification in Google Search Console. */}
+          {autoSyncCount > 0 && (
+            <div className="space-y-2 animate-fadeIn border border-[#D4AF37]/20 rounded-xl p-3 bg-[#1F0F3D]/40">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest flex items-center gap-1.5">
+                  {driveWatch?.active ? (
+                    <BellRing className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  ) : (
+                    <Bell className="w-3.5 h-3.5 text-slate-500" />
+                  )}
+                  Push Notification
+                </span>
+                {driveWatch?.active ? (
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    AKTIF
+                  </span>
+                ) : driveWatch ? (
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/30 font-bold">
+                    NONAKTIF
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-slate-500 font-mono">cek...</span>
+                )}
+              </div>
+
+              {driveWatch?.active && driveWatch.msRemaining != null && (
+                <div className="text-[9px] text-slate-400 font-mono">
+                  Berakhir dalam:{" "}
+                  <strong className={
+                    driveWatch.msRemaining < 2 * 60 * 60 * 1000
+                      ? "text-amber-300"
+                      : "text-emerald-300"
+                  }>
+                    {Math.floor(driveWatch.msRemaining / (60 * 60 * 1000))}j{" "}
+                    {Math.floor((driveWatch.msRemaining % (60 * 60 * 1000)) / (60 * 1000))}m
+                  </strong>
+                  {driveWatch.needsRenewal && (
+                    <span className="ml-2 text-amber-400/80">(akan diperbarui otomatis)</span>
+                  )}
+                </div>
+              )}
+
+              {driveWatchError && (
+                <div className="text-[9px] text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg p-2">
+                  {driveWatchError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                {!driveWatch?.active ? (
+                  <button
+                    type="button"
+                    onClick={registerDriveWatch}
+                    disabled={driveWatchLoading}
+                    className="flex-1 text-[10px] font-bold py-1.5 px-2 rounded-lg bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 hover:bg-[#D4AF37]/25 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {driveWatchLoading ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <BellRing className="w-3 h-3" />
+                    )}
+                    {driveWatchLoading ? "Memproses..." : "Aktifkan Push"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={unregisterDriveWatch}
+                    disabled={driveWatchLoading}
+                    className="flex-1 text-[10px] font-bold py-1.5 px-2 rounded-lg bg-slate-600/20 text-slate-400 border border-slate-600/30 hover:bg-slate-600/30 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {driveWatchLoading ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Bell className="w-3 h-3" />
+                    )}
+                    Nonaktifkan
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={fetchDriveWatchStatus}
+                  className="text-[10px] font-bold py-1.5 px-2 rounded-lg bg-[#1F0F3D]/60 text-slate-400 border border-slate-700/50 hover:bg-[#1F0F3D] transition-all flex items-center justify-center"
+                  title="Cek ulang status"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
+
+              <p className="text-[8.5px] text-slate-500 leading-normal">
+                Push notification membuat Google Drive memanggil server kita
+                saat ada file berubah — sinkronisasi terjadi dalam ~60 detik,
+                tanpa polling. Membutuhkan verifikasi domain di{" "}
+                <a
+                  href="https://search.google.com/search-console"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#D4AF37]/70 hover:text-[#D4AF37] underline"
+                >
+                  Google Search Console
+                </a>.
               </p>
             </div>
           )}

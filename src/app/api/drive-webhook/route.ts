@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getWatchChannel,
+  findWatchChannelById,
   markAllAutoSyncProjectsNeedSync,
 } from "@/lib/queries";
 
@@ -54,14 +54,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Look up the channel by ID. We don't have the userEmail in the request,
-  // so we search by channelId. Since channelId is a UUID and userEmail is
-  // unique per channel, finding the channel tells us which admin's Drive
-  // changed.
-  // NOTE: getWatchChannel takes userEmail, but we have channelId. We need a
-  // lookup by channelId instead. For simplicity, we store channelId → userEmail
-  // mapping. Actually, let's just query by channelId directly.
-  const channel = await findChannelById(channelId);
+  // Look up the channel by ID. The webhook only sends channelId (not
+  // userEmail), so we query by channelId to find the admin who registered it.
+  const channel = await findWatchChannelById(channelId);
   if (!channel) {
     // Unknown channel — could be a stale notification from an old channel.
     // Acknowledge with 200 so Google doesn't retry, but do nothing.
@@ -131,27 +126,4 @@ export async function GET() {
     endpoint: "drive-webhook",
     description: "Google Drive Push Notification receiver",
   });
-}
-
-// Helper: find a channel by channelId (not userEmail).
-// The webhook only sends channelId, not userEmail, so we need this lookup.
-async function findChannelById(channelId: string): Promise<{
-  userEmail: string;
-  token: string;
-} | null> {
-  // We can't easily query by channelId using getWatchChannel (which takes
-  // userEmail), so we do a direct query here.
-  // Importing db directly would create a circular dependency, so we use
-  // a lightweight approach via the existing query infrastructure.
-  const { db } = await import("@/lib/db");
-  const r = await db.execute({
-    sql: "SELECT userEmail, token FROM DriveWatchChannel WHERE id = ? LIMIT 1",
-    args: [channelId],
-  });
-  if (r.rows.length === 0) return null;
-  const row = r.rows[0] as Record<string, unknown>;
-  return {
-    userEmail: String(row.userEmail),
-    token: String(row.token ?? ""),
-  };
 }
