@@ -772,3 +772,76 @@ Stage Summary:
   - ✅ Deployed + verified di produksi (version b07c0f2c)
   - ✅ D1 writes: 0 auto-sync, 0 no-op-sync = aman selamanya
   - ⚠️ D1 writes saat ini masih BLOCKED (quota exceeded hari ini). Reset 2026-11-03 00:00:00 UTC (~6.5 jam lagi).
+
+---
+Task ID: 29
+Agent: main (Z.ai Code)
+Task: Re-enable auto-sync with SMART DELTA — minimal D1 writes, catches Drive changes automatically.
+
+Context: User clarified auto-sync is a core feature — admin adds photos to Google Drive,
+expects them to appear in gallery soon. Previous removal (Task 28) was too aggressive.
+The real fix was making replaceProjectPhotos true-delta (already done in Task 28).
+Now that 0 writes happen when folder unchanged, background auto-sync is safe to re-enable.
+
+Architecture: Frontend-triggered smart polling (not server-side cron)
+- Scheduler lives in page.tsx, fires only when admin logged in + tab visible
+- Uses existing /api/projects/:id/sync endpoint (admin OAuth token)
+- replaceProjectPhotos true-delta: 0 writes when unchanged, N writes when N photos changed
+- No need for server-side OAuth refresh token storage (simpler architecture)
+
+Safety guards (all in page.tsx scheduler):
+  1. Only runs when admin/manager logged in (needs OAuth token)
+  2. Only runs when tab visible (document.visibilityState === "visible")
+  3. Min effective interval: 5m (legacy 30s/1m/3m clamped to 5m)
+  4. Max 5 galleries with auto-sync enabled
+  5. Syncs staggered 15s per gallery (no CPU spikes)
+  6. loadProjects() only called when syncDelta.upserted > 0 || deleted > 0
+
+Interval options updated (removed aggressive options):
+  Old: 30s, 1m, 3m, 5m, 1h, 6h
+  New: 5m (recommended), 15m, 30m, 1h, 6h
+
+Daily cost at full load (5 galleries × 5m):
+  - D1 reads:    ~2,880/day  (0.06% of 5M/day limit)
+  - D1 writes:   0 when folders unchanged; ~N when N photos added
+  - Workers:    ~1,440/day  (1.4% of 100K/day limit)
+  - Drive API:  ~7,200/day  (within Google quota)
+
+Files changed:
+  - src/app/page.tsx: RE-ADDED smart auto-sync scheduler (lines 231-363)
+  - src/components/lihum/AdminPanel.tsx: updated dropdown (5m/15m/30m/1h/6h),
+    updated display labels, updated helpful text ("Smart Delta Sync")
+  - src/types/index.ts: autoSyncInterval type → "5m"|"15m"|"30m"|"1h"|"6h"
+  - src/lib/db.ts: default '3m' → '5m'
+  - src/lib/queries.ts: default "3m" → "5m"
+  - src/lib/seed.ts: default "3m" → "5m"
+  - src/app/api/projects/route.ts: type cast + default "5m"
+  - src/app/api/projects/[id]/route.ts: type cast
+  - prisma/schema.prisma: default "3m" → "5m", comment updated
+
+Deploy:
+  - Build OpenNext sukses (Worker 5026 KiB, gzip 1022 KiB)
+  - wrangler deploy sukses (version d271cfbc-5c32-49f6-b5d3-42c9d73dd4d9)
+  - Deployed bundle verified: contains "Auto-Sync", "Smart Delta", "syncDelta", "0 D1 writes"
+
+Verification (Agent Browser di produksi):
+  - Home HTTP 200 (0.33s), 58 galeri load ✓
+  - Console errors: 0 ✓
+  - Console messages: 0 (no auto-sync spam when not logged in) ✓
+  - Network /sync POST calls: 0 (correct — scheduler requires admin login) ✓
+  - Click galeri → 51 foto load dengan size ✓
+  - Footer sticky (atBottom: true) ✓
+  - Mobile 375px: h1 visible (275px), 58 gallery cards, footer at bottom ✓
+
+Note: 0/58 galleries currently have auto-sync ON (disabled in Task 28 to stop bleeding).
+Admin perlu login dan re-enable auto-sync via AdminPanel untuk galeri yang diinginkan.
+Interval akan otomatis clamped ke 5m minimum jika ada legacy value "3m" di DB.
+
+Stage Summary:
+  - ✅ Auto-sync RE-ENABLED with smart delta — 0 writes when Drive unchanged
+  - ✅ 5 safety guards (login, visible, 5m min, 5 max, staggered)
+  - ✅ Interval options simplified: 5m/15m/30m/1h/6h (no more 30s/1m/3m)
+  - ✅ Deployed + verified di produksi (version d271cfbc)
+  - ✅ D1 writes: 0 when unchanged = aman selamanya
+  - ℹ️ Admin needs to re-enable auto-sync per gallery (was disabled to stop quota bleed)
+  - ℹ️ Future enhancement: Google Drive Push Notifications (webhooks) for instant 0-polling updates

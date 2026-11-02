@@ -123,7 +123,7 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   downloadCount: Number(r.downloadCount ?? 0),
   autoHideDays: Number(r.autoHideDays ?? 0),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
-  autoSyncInterval: String(r.autoSyncInterval ?? "3m"),
+  autoSyncInterval: String(r.autoSyncInterval ?? "5m"),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
   photoCount: Number(r.photoCount ?? 0),
   createdAt: String(r.createdAt ?? ""),

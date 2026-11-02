@@ -23,7 +23,7 @@ export interface Project {
   viewCount?: number;
   downloadCount?: number;
   photos: Photo[];
-  autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
+  autoSyncInterval?: "5m" | "15m" | "30m" | "1h" | "6h";
   lastSyncedAt?: string;
   /** Present only when the gallery is private and the visitor hasn't unlocked it. */
   requiresPassword?: boolean;
@@ -47,7 +47,7 @@ export interface ProjectSummary {
   photoCount: number;
   createdAt: string;
   autoSyncEnabled?: boolean;
-  autoSyncInterval?: "1m" | "3m" | "5m" | "1h" | "6h";
+  autoSyncInterval?: "5m" | "15m" | "30m" | "1h" | "6h";
   lastSyncedAt?: string;
 }
 

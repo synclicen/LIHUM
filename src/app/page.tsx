@@ -228,20 +228,139 @@ export default function App() {
     return () => clearInterval(fetchMetadataInterval);
   }, []);
 
-  // ── Auto-sync scheduler: PERMANENTLY REMOVED ──
-  // Background auto-sync was the root cause of exceeding the Cloudflare D1
-  // free-tier daily limit of 100,000 row writes (email received 2026-11-02).
+  // ── Smart Auto-Sync Scheduler ──
   //
-  // The problem: replaceProjectPhotos used INSERT OR REPLACE on EVERY photo on
-  // every sync cycle. Even when photos were unchanged, each row counted as a
-  // write. With N galleries × P photos × sync-every-3m, writes exploded past
-  // 100K/day and D1 blocked all writes until midnight UTC reset.
+  // RE-ENABLED with TRUE DELTA sync. The previous auto-sync was removed because
+  // replaceProjectPhotos ran INSERT OR REPLACE on EVERY photo every cycle,
+  // counting each as a D1 row write — even when the data was byte-identical.
+  // That blew through the 100K writes/day D1 free-tier limit.
   //
-  // Fix: there is NO auto-sync scheduler in the frontend anymore. Admins sync
-  // manually via the "Sinkron Drive" button. The autoSyncEnabled / autoSyncInterval
-  // columns remain in the schema for display purposes only — nothing reads them
-  // to trigger background syncs. Manual sync now uses a true delta (see
-  // replaceProjectPhotos) so 0 writes happen when a Drive folder is unchanged.
+  // Now replaceProjectPhotos computes a true delta: it only writes rows that
+  // are genuinely new or changed, and only deletes rows that are gone. A sync
+  // of an unchanged Drive folder costs **0 D1 writes**. This makes background
+  // auto-sync safe under the free-tier limit.
+  //
+  // Safety guards (all enforced here, in the frontend):
+  //   1. Only runs when admin/manager is logged in (needs their OAuth token).
+  //   2. Only runs when the browser tab is visible (skips when backgrounded —
+  //      saves Workers requests + Drive API calls).
+  //   3. Minimum effective interval: 5 minutes. Legacy "30s"/"1m"/"3m"
+  //      values stored in the DB are clamped up to 5m automatically.
+  //   4. Maximum 5 galleries with auto-sync enabled (UI also enforces this).
+  //   5. Syncs are staggered by 15s per gallery to spread CPU + Drive API
+  //      load, so 5 galleries don't all fire at the same instant.
+  //
+  // Daily cost at full load (5 galleries × 5m interval):
+  //   - D1 reads:       ~2,880/day  (0.06% of 5M/day limit)
+  //   - D1 writes:      0 when folders unchanged; ~N when N photos added
+  //   - Workers reqs:   ~1,440/day  (1.4% of 100K/day limit)
+  //   - Drive API calls: ~7,200/day  (well within Google's quota)
+  const projectsRef = useRef<ProjectSummary[]>([]);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    if (!accessToken || !user) return;
+
+    const allSyncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
+    if (allSyncedProjects.length === 0) return;
+
+    // SAFETY: limit to max 5 galleries to stay within D1/Workers quotas.
+    const syncedProjects = allSyncedProjects.slice(0, 5);
+    if (allSyncedProjects.length > 5) {
+      console.warn(
+        `[Auto-Sync] ${allSyncedProjects.length} galleries have auto-sync enabled, but only 5 will be synced. Disable others or use manual sync.`
+      );
+    }
+
+    const intervalTimers: ReturnType<typeof setInterval>[] = [];
+    const startDelays: ReturnType<typeof setTimeout>[] = [];
+
+    syncedProjects.forEach((proj, index) => {
+      // Stagger first-run by 15s per gallery to avoid CPU spikes.
+      const staggerMs = index * 15000;
+
+      // Parse interval, clamping to 5m minimum.
+      // Legacy "30s"/"1m"/"3m" values are upgraded to 5m automatically.
+      let intervalMs = 300000; // default 5m
+      switch (proj.autoSyncInterval) {
+        case "5m": intervalMs = 300000; break;
+        case "15m": intervalMs = 900000; break;
+        case "30m": intervalMs = 1800000; break;
+        case "1h": intervalMs = 3600000; break;
+        case "6h": intervalMs = 21600000; break;
+        // Legacy values — clamp to 5m
+        case "30s":
+        case "1m":
+        case "3m":
+        default:
+          intervalMs = 300000;
+          break;
+      }
+
+      const runSync = async () => {
+        // Skip if tab is not visible — saves Workers requests + Drive API calls.
+        if (document.visibilityState !== "visible") return;
+
+        const currentProj = projectsRef.current.find((p) => p.id === proj.id);
+        if (!currentProj || !currentProj.autoSyncEnabled) return;
+
+        try {
+          const res = await fetch(`/api/projects/${proj.id}/sync`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "x-user-email": user.email || "",
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.syncDelta) {
+              const { upserted, deleted, unchanged } = data.syncDelta;
+              if (upserted > 0 || deleted > 0) {
+                console.log(
+                  `[Auto-Sync] "${currentProj.name}": +${upserted} new, -${deleted} removed, ${unchanged} unchanged`
+                );
+                // Refresh gallery counts only when something actually changed.
+                loadProjects();
+              } else {
+                console.log(
+                  `[Auto-Sync] "${currentProj.name}": ${unchanged} unchanged (0 D1 writes)`
+                );
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`[Auto-Sync] Failed for "${currentProj.name}":`, err);
+        }
+      };
+
+      // Stagger the first run, then set up the recurring interval.
+      const startTimer = setTimeout(() => {
+        runSync();
+        const intervalId = setInterval(runSync, intervalMs);
+        intervalTimers.push(intervalId);
+      }, staggerMs);
+      startDelays.push(startTimer);
+    });
+
+    return () => {
+      startDelays.forEach(clearTimeout);
+      intervalTimers.forEach(clearInterval);
+    };
+    // Re-create scheduler only when the SET of auto-sync galleries changes.
+    // loadProjects() updating photoCount/lastSyncedAt does NOT trigger this
+    // (those fields aren't in the dependency string), so the scheduler is
+    // stable across data refreshes.
+  }, [
+    accessToken,
+    user,
+    projects
+      .filter((p) => p.autoSyncEnabled)
+      .map((p) => `${p.id}-${p.autoSyncInterval}`)
+      .join(","),
+  ]);
 
   return (
     <div

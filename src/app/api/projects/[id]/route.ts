@@ -49,7 +49,7 @@ function projectOut(p: ProjectRow) {
     downloadCount: p.downloadCount,
     autoSyncEnabled: toBool(p.autoSyncEnabled),
     autoHideDays: p.autoHideDays,
-    autoSyncInterval: p.autoSyncInterval as "1m" | "3m" | "5m" | "1h" | "6h",
+    autoSyncInterval: p.autoSyncInterval as "5m" | "15m" | "30m" | "1h" | "6h",
     lastSyncedAt: p.lastSyncedAt,
     photoCount: p.photoCount,
     createdAt: p.createdAt,

@@ -99,7 +99,7 @@ const DEFAULT_PROJECTS: NewProjectInput[] = [
     password: "",
     isHidden: false,
     autoSyncEnabled: false,
-    autoSyncInterval: "3m",
+    autoSyncInterval: "5m",
     createdAt: "2026-05-27",
   },
   {
@@ -114,7 +114,7 @@ const DEFAULT_PROJECTS: NewProjectInput[] = [
     password: "",
     isHidden: false,
     autoSyncEnabled: false,
-    autoSyncInterval: "3m",
+    autoSyncInterval: "5m",
     createdAt: "2026-05-28",
   },
 ];

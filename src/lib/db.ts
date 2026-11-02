@@ -169,7 +169,7 @@ export async function ensureSchema(): Promise<void> {
   cameraFilter TEXT NOT NULL DEFAULT 'original', cameraAspectRatio TEXT NOT NULL DEFAULT '4:3',
   cameraResolution TEXT NOT NULL DEFAULT '1920x1080', cameraCountdown INTEGER NOT NULL DEFAULT 3,
   cameraMirror INTEGER NOT NULL DEFAULT 1, cameraFacing TEXT NOT NULL DEFAULT 'environment',
-  autoSyncEnabled INTEGER NOT NULL DEFAULT 0, autoSyncInterval TEXT NOT NULL DEFAULT '3m',
+  autoSyncEnabled INTEGER NOT NULL DEFAULT 0, autoSyncInterval TEXT NOT NULL DEFAULT '5m',
   lastSyncedAt TEXT NOT NULL DEFAULT '', photoCount INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL
 )` },
         { sql: `CREATE TABLE IF NOT EXISTS Photo (

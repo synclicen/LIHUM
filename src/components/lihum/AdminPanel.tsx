@@ -91,8 +91,8 @@ export default function AdminPanel({
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState<
-    "30s" | "1m" | "3m" | "5m" | "1h" | "6h"
-  >("3m");
+    "5m" | "15m" | "30m" | "1h" | "6h"
+  >("5m");
   const [autoHideDays, setAutoHideDays] = useState(0);
 
   // Account form/management states
@@ -168,7 +168,7 @@ export default function AdminPanel({
     setPassword("");
     setAutoSyncEnabled(false);
     setAutoFilterEnabled(false);
-    setAutoSyncInterval("3m");
+    setAutoSyncInterval("5m");
     setAutoHideDays(0);
     setAdditionalFolders([]);
     setNewFolderUrl("");
@@ -188,7 +188,7 @@ export default function AdminPanel({
     setPassword(""); // never pre-fill — admin can leave empty to keep existing
     setAutoSyncEnabled(!!project.autoSyncEnabled);
     setAutoFilterEnabled(!!project.autoFilterEnabled);
-    setAutoSyncInterval((project.autoSyncInterval as "30s" | "1m" | "3m" | "5m" | "1h" | "6h") || "3m");
+    setAutoSyncInterval((project.autoSyncInterval as "5m" | "15m" | "30m" | "1h" | "6h") || "5m");
     setAutoHideDays((project as any).autoHideDays ?? 0);
     setAllowVisitorUpload(!!project.allowVisitorUpload);
     setErrorMsg("");
@@ -1315,17 +1315,14 @@ export default function AdminPanel({
                 }
                 className="w-full bg-[#1F0F3D]/90 border border-violet-950 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono font-semibold"
               >
-                <option className="bg-[#120A21]" value="30s">
-                  ⚡ Realtime (30 Detik)
-                </option>
-                <option className="bg-[#120A21]" value="1m">
-                  Setiap 1 Menit
-                </option>
-                <option className="bg-[#120A21]" value="3m">
-                  Setiap 3 Menit
-                </option>
                 <option className="bg-[#120A21]" value="5m">
-                  Setiap 5 Menit
+                  Setiap 5 Menit (Direkomendasikan)
+                </option>
+                <option className="bg-[#120A21]" value="15m">
+                  Setiap 15 Menit
+                </option>
+                <option className="bg-[#120A21]" value="30m">
+                  Setiap 30 Menit
                 </option>
                 <option className="bg-[#120A21]" value="1h">
                   Setiap 1 Jam
@@ -1335,15 +1332,18 @@ export default function AdminPanel({
                 </option>
               </select>
               <p className="text-[9.5px] text-slate-400 leading-normal font-sans">
-                *Tautan sinkronisasi berjalan otomatis di background ketika
-                browser Admin/Manajer terhubung.{" "}
                 <span className="text-[#D4AF37]/80">
-                  Pilih <strong>Realtime</strong> agar foto baru/perubahan
-                  di Google Drive langsung tersinkron tiap 30 detik.
+                  ✓ <strong>Smart Delta Sync:</strong> hanya foto baru/berubah
+                  yang ditulis ke database. Jika tidak ada perubahan di Google
+                  Drive, sinkronisasi menghabiskan 0 kuota D1.
+                </span>
+                <span className="block mt-1">
+                  *Sinkronisasi berjalan otomatis ketika browser
+                  Admin/Manajer terbuka dan tab aktif (visible). Foto baru di
+                  Google Drive akan muncul di galeri sesuai interval.
                 </span>
                 <span className="block mt-1 text-amber-400/70">
-                  ⚠ Batas: maksimal 5 galeri aktif sync per hari (D1 free tier).
-                  Setiap galeri bisa sync ~20,000 foto baru per hari.
+                  ⚠ Batas: maksimal 5 galeri dengan auto-sync aktif.
                 </span>
               </p>
             </div>
@@ -1641,14 +1641,12 @@ export default function AdminPanel({
                             >
                               {project.autoSyncEnabled
                                 ? `Aktif (${
-                                    project.autoSyncInterval === "30s"
-                                      ? "Realtime 30 Detik"
-                                      : project.autoSyncInterval === "1m"
-                                      ? "1 Menit"
-                                      : project.autoSyncInterval === "3m"
-                                      ? "3 Menit"
-                                      : project.autoSyncInterval === "5m"
+                                    project.autoSyncInterval === "5m"
                                       ? "5 Menit"
+                                      : project.autoSyncInterval === "15m"
+                                      ? "15 Menit"
+                                      : project.autoSyncInterval === "30m"
+                                      ? "30 Menit"
                                       : project.autoSyncInterval === "1h"
                                       ? "1 Jam"
                                       : "6 Jam"
