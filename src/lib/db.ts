@@ -132,7 +132,7 @@ export async function ensureSchema(): Promise<void> {
   const p = (async () => {
     // Check if all tables exist (READ ONLY — 1 query)
     const tableCheck = await db.execute({
-      sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Project','Photo','Account','PendingUpload','ProjectFolder','Setting')",
+      sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Project','Photo','Account','PendingUpload','ProjectFolder','Setting','DriveWatchChannel')",
     });
     const existingTables = new Set(
       tableCheck.rows.map((r) => String((r as Record<string, unknown>).name))
@@ -143,15 +143,13 @@ export async function ensureSchema(): Promise<void> {
       existingTables.has("Account") &&
       existingTables.has("PendingUpload") &&
       existingTables.has("ProjectFolder") &&
-      existingTables.has("Setting");
+      existingTables.has("Setting") &&
+      existingTables.has("DriveWatchChannel");
 
     if (allTablesExist) {
-      // Tables exist — SKIP ALL column migrations to avoid D1 writes.
-      // All columns were already migrated in previous deploys.
-      // Running ensureColumn on every new isolate = 15 PRAGMA reads +
-      // potential ALTER writes (if column "missing" due to race condition).
-      // Since production DB is fully migrated, we skip entirely.
-      // This saves 15 D1 reads + potential writes per new isolate.
+      // Tables exist — run needsSync column migration (1 PRAGMA read + maybe 1 ALTER write).
+      // This is the only migration we still run because needsSync was added after initial deploy.
+      await ensureColumn("Project", "needsSync", "INTEGER NOT NULL DEFAULT 0");
       return;
     }
 
@@ -170,6 +168,7 @@ export async function ensureSchema(): Promise<void> {
   cameraResolution TEXT NOT NULL DEFAULT '1920x1080', cameraCountdown INTEGER NOT NULL DEFAULT 3,
   cameraMirror INTEGER NOT NULL DEFAULT 1, cameraFacing TEXT NOT NULL DEFAULT 'environment',
   autoSyncEnabled INTEGER NOT NULL DEFAULT 0, autoSyncInterval TEXT NOT NULL DEFAULT '5m',
+  needsSync INTEGER NOT NULL DEFAULT 0,
   lastSyncedAt TEXT NOT NULL DEFAULT '', photoCount INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL
 )` },
         { sql: `CREATE TABLE IF NOT EXISTS Photo (
@@ -198,6 +197,12 @@ export async function ensureSchema(): Promise<void> {
         { sql: `CREATE INDEX IF NOT EXISTS idx_projectfolder_projectId ON ProjectFolder(projectId)` },
         { sql: `CREATE TABLE IF NOT EXISTS Setting (
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL
+)` },
+        { sql: `CREATE TABLE IF NOT EXISTS DriveWatchChannel (
+  id TEXT PRIMARY KEY, userEmail TEXT NOT NULL UNIQUE,
+  resourceId TEXT NOT NULL DEFAULT '', startPageToken TEXT NOT NULL DEFAULT '',
+  token TEXT NOT NULL, expiration TEXT NOT NULL,
+  createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
 )` },
       ]);
     } catch (writeErr: any) {

@@ -24,9 +24,30 @@ export interface ProjectRow {
   autoHideDays: number; // 0 = never, >0 = hide after X days
   autoSyncEnabled: number; // 0 | 1
   autoSyncInterval: string;
+  needsSync: number; // 0 | 1 — set by Drive webhook, cleared by sync
   lastSyncedAt: string;
   photoCount: number;
   createdAt: string;
+}
+
+export interface DriveWatchChannelRow {
+  id: string; // channel UUID
+  userEmail: string; // admin's email (unique)
+  resourceId: string;
+  startPageToken: string;
+  token: string; // verification token
+  expiration: string; // ISO timestamp
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewDriveWatchChannelInput {
+  id: string;
+  userEmail: string;
+  resourceId: string;
+  startPageToken: string;
+  token: string;
+  expiration: string;
 }
 
 export interface PhotoRow {
@@ -124,6 +145,7 @@ const asProject = (r: Record<string, unknown>): ProjectRow => ({
   autoHideDays: Number(r.autoHideDays ?? 0),
   autoSyncEnabled: Number(r.autoSyncEnabled ?? 0),
   autoSyncInterval: String(r.autoSyncInterval ?? "5m"),
+  needsSync: Number(r.needsSync ?? 0),
   lastSyncedAt: String(r.lastSyncedAt ?? ""),
   photoCount: Number(r.photoCount ?? 0),
   createdAt: String(r.createdAt ?? ""),
@@ -933,4 +955,123 @@ export async function setCameraConfig(config: CameraConfig): Promise<void> {
       maxPhotos: typeof config.maxPhotos === "number" && config.maxPhotos > 0 ? Math.min(config.maxPhotos, 20) : 5,
     })
   );
+}
+
+// ---------- Drive Push Notifications (watch channels) ----------
+//
+// Google Drive Push Notifications work as follows:
+//   1. Admin registers a watch channel via POST /api/drive-watch
+//      → calls Google's changes/watch endpoint with their OAuth token
+//      → Google sends a "sync" confirmation to our webhook immediately
+//   2. When ANY file in the admin's Drive changes, Google POSTs to our
+//      /api/drive-webhook endpoint with headers (no body).
+//   3. We verify the X-Goog-Channel-Token header matches the stored token,
+//      then mark needsSync=1 on all of that admin's auto-sync galleries.
+//   4. The admin's browser scheduler checks needsSync every 60s; if set,
+//      it triggers an immediate delta-sync (0 writes if nothing actually
+//      changed in the watched galleries — true delta).
+//
+// Channels expire after max 24h. The admin's browser auto-renews channels
+// expiring within 2 hours on each page load.
+
+export async function getWatchChannel(
+  userEmail: string
+): Promise<DriveWatchChannelRow | null> {
+  const r = await db.execute({
+    sql: "SELECT * FROM DriveWatchChannel WHERE userEmail = ? LIMIT 1",
+    args: [userEmail],
+  });
+  if (r.rows.length === 0) return null;
+  const row = r.rows[0] as Record<string, unknown>;
+  return {
+    id: String(row.id),
+    userEmail: String(row.userEmail),
+    resourceId: String(row.resourceId ?? ""),
+    startPageToken: String(row.startPageToken ?? ""),
+    token: String(row.token ?? ""),
+    expiration: String(row.expiration ?? ""),
+    createdAt: String(row.createdAt ?? ""),
+    updatedAt: String(row.updatedAt ?? ""),
+  };
+}
+
+export async function upsertWatchChannel(
+  input: NewDriveWatchChannelInput
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `INSERT INTO DriveWatchChannel (id, userEmail, resourceId, startPageToken, token, expiration, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(userEmail) DO UPDATE SET
+            resourceId = excluded.resourceId,
+            startPageToken = excluded.startPageToken,
+            token = excluded.token,
+            expiration = excluded.expiration,
+            updatedAt = excluded.updatedAt`,
+    args: [
+      input.id,
+      input.userEmail,
+      input.resourceId,
+      input.startPageToken,
+      input.token,
+      input.expiration,
+      now,
+      now,
+    ],
+  });
+}
+
+export async function deleteWatchChannel(userEmail: string): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM DriveWatchChannel WHERE userEmail = ?",
+    args: [userEmail],
+  });
+}
+
+// ---------- needsSync flag (set by webhook, cleared by sync) ----------
+
+/**
+ * Marks a single project as needing sync (called by Drive webhook).
+ * Uses UPDATE ... WHERE to affect exactly one row — minimal write.
+ */
+export async function markProjectNeedsSync(projectId: string): Promise<void> {
+  await db.execute({
+    sql: "UPDATE Project SET needsSync = 1 WHERE id = ?",
+    args: [projectId],
+  });
+}
+
+/**
+ * Marks ALL auto-sync-enabled galleries as needing sync.
+ * Called by the Drive webhook when ANY file in the admin's Drive changes —
+ * we don't know which gallery, so we mark all. The true-delta sync means
+ * galleries with no actual changes cost 0 writes.
+ */
+export async function markAllAutoSyncProjectsNeedSync(): Promise<number> {
+  const r = await db.execute({
+    sql: "UPDATE Project SET needsSync = 1 WHERE autoSyncEnabled = 1",
+  });
+  return r.rowsAffected;
+}
+
+/**
+ * Clears the needsSync flag after a sync completes.
+ */
+export async function clearNeedsSync(projectId: string): Promise<void> {
+  await db.execute({
+    sql: "UPDATE Project SET needsSync = 0 WHERE id = ?",
+    args: [projectId],
+  });
+}
+
+/**
+ * Returns the list of auto-sync-enabled galleries that currently have
+ * needsSync=1. The admin's browser scheduler calls this every 60s to detect
+ * webhook notifications without polling Google Drive directly.
+ */
+export async function getProjectsNeedingSync(): Promise<string[]> {
+  const r = await db.execute({
+    sql: "SELECT id FROM Project WHERE autoSyncEnabled = 1 AND needsSync = 1",
+  });
+  return r.rows.map((row) => String((row as Record<string, unknown>).id));
 }

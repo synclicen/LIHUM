@@ -11,6 +11,7 @@ import {
   findProjectById,
   replaceProjectPhotos,
   updateProjectSync,
+  clearNeedsSync,
   type NewPhotoInput,
   type SyncDelta,
 } from "@/lib/queries";
@@ -413,6 +414,12 @@ export async function syncProjectWithToken(
   } else {
     console.log(`[Sync] Project ${projectId}: 0 changes (${syncDelta.unchanged} unchanged) — SKIPPED write`);
   }
+
+  // Always clear the needsSync flag after a sync attempt — whether or not
+  // there were changes. The webhook may have fired (set needsSync=1), and we
+  // just confirmed the current state. Clearing prevents re-syncing the same
+  // notification on the next 60s check.
+  await clearNeedsSync(projectId);
 
   return {
     success: true,

@@ -48,6 +48,7 @@ export interface ProjectSummary {
   createdAt: string;
   autoSyncEnabled?: boolean;
   autoSyncInterval?: "5m" | "15m" | "30m" | "1h" | "6h";
+  needsSync?: boolean;
   lastSyncedAt?: string;
 }
 

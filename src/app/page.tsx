@@ -260,6 +260,89 @@ export default function App() {
     projectsRef.current = projects;
   }, [projects]);
 
+  // ── Drive Push Notification needsSync checker ──
+  //
+  // Google Drive sends a push notification to our /api/drive-webhook when any
+  // file in the admin's Drive changes. The webhook marks needsSync=1 on all
+  // of the admin's auto-sync galleries. This checker polls /api/needs-sync
+  // every 60s to detect that flag, and triggers an immediate delta-sync for
+  // any flagged gallery — bypassing the normal 5m interval.
+  //
+  // Why 60s? It's the sweet spot:
+  //   - Fast enough that Drive changes appear in the gallery within 1 minute
+  //     (vs 5 minutes with pure polling)
+  //   - Slow enough that D1 reads are minimal (1,440 reads/day = 0.03% of limit)
+  //
+  // Cost: 1 D1 read per 60s = 1,440 reads/day = 0.03% of the 5M/day limit.
+  // Sync writes only happen when Drive actually changed (true delta = 0 writes
+  // when nothing changed). This replaces wasteful 5m polling of Google Drive
+  // with cheap D1 flag checks.
+  useEffect(() => {
+    if (!accessToken || !user) return;
+
+    const checkNeedsSync = async () => {
+      // Skip if tab not visible — saves Workers requests.
+      if (document.visibilityState !== "visible") return;
+
+      try {
+        const res = await fetch("/api/needs-sync", {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "x-user-email": user.email || "",
+          },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const needingSync: string[] = data.needsSync || [];
+        if (needingSync.length === 0) return;
+
+        // Trigger immediate sync for each flagged gallery.
+        // We do them sequentially (not in parallel) to avoid CPU spikes.
+        for (const projectId of needingSync) {
+          const proj = projectsRef.current.find((p) => p.id === projectId);
+          if (!proj) continue;
+          try {
+            const syncRes = await fetch(`/api/projects/${projectId}/sync`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "x-user-email": user.email || "",
+              },
+            });
+            if (syncRes.ok) {
+              const syncData = await syncRes.json();
+              if (syncData.syncDelta) {
+                const { upserted, deleted, unchanged } = syncData.syncDelta;
+                if (upserted > 0 || deleted > 0) {
+                  console.log(
+                    `[Push] "${proj.name}": +${upserted} new, -${deleted} removed, ${unchanged} unchanged (push notification)`
+                  );
+                  loadProjects();
+                } else {
+                  console.log(
+                    `[Push] "${proj.name}": no actual changes (${unchanged} unchanged) — Drive change didn't affect this gallery`
+                  );
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`[Push] Sync failed for "${proj.name}":`, err);
+          }
+        }
+      } catch (err) {
+        console.error("[Push] needsSync check failed:", err);
+      }
+    };
+
+    // Check immediately on mount, then every 60s.
+    checkNeedsSync();
+    const intervalId = setInterval(checkNeedsSync, 60000);
+
+    return () => clearInterval(intervalId);
+    // Re-create only when auth changes (not on every projects update —
+    // projectsRef keeps the latest list without re-triggering this effect).
+  }, [accessToken, user]);
+
   useEffect(() => {
     if (!accessToken || !user) return;
 
