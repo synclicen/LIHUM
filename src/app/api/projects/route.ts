@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSeed, getAccountRole, parseDriveFolderId, slugify, hashPassword } from "@/lib/lihum";
+import { getAccountRole, parseDriveFolderId, slugify, hashPassword, ensureSeed } from "@/lib/lihum";
 import {
   getAllProjectSummaries,
   getVisibleProjectSummaries,
@@ -40,7 +40,8 @@ function summaryOut(p: ProjectRow) {
 // are treated as hidden (isHidden=true, autoSyncEnabled=false) at READ time.
 // No writes needed — the check is computed on-the-fly from createdAt + autoHideDays.
 export async function GET(req: NextRequest) {
-  await ensureSeed();
+  // SKIP ensureSeed on public read — saves 3 D1 reads per new isolate.
+  // Schema/seed already done by other routes. Production DB always has data.
   const userEmail = req.headers.get("x-user-email") || undefined;
   const role = await getAccountRole(userEmail);
   let projects =

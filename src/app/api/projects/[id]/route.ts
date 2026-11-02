@@ -62,7 +62,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureSeed();
+  // SKIP ensureSeed on GET — saves 3 D1 reads per new isolate.
   const { id } = await params;
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
