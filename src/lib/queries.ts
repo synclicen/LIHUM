@@ -413,41 +413,109 @@ export async function incrementProjectDownloads(
 
 // ---------- Photos ----------
 /**
- * Replaces all photos for a project WITHOUT a "zero photos" window.
+ * Sync delta: how many photos were actually written to D1.
  *
- * The old implementation did DELETE-all-then-INSERT. During the gap between
- * DELETE and the chunked INSERTs finishing, concurrent GET requests would
- * see 0 photos — bad UX when thousands of visitors are polling every 15s
- * and auto-sync runs every 30s.
+ * `upserted` counts only NEW or CHANGED photos that were written.
+ * `unchanged` counts photos whose data matched exactly — these are NOT
+ * written, which is what makes this function safe to call on every manual
+ * sync without blowing through the D1 100K writes/day free-tier limit.
+ */
+export interface SyncDelta {
+  upserted: number;
+  deleted: number;
+  unchanged: number;
+}
+
+/**
+ * Replaces all photos for a project with a TRUE delta — only writes rows that
+ * are genuinely new or changed, and only deletes rows that are gone.
  *
- * New strategy (swap-free, no empty window):
- *  1. UPSERT all new photos (INSERT OR REPLACE) in chunks — old photos that
- *     still exist in the new batch keep their row; new photos are added.
- *     During this phase the gallery shows either old OR new data — never empty.
- *  2. DELETE only the photos that are NOT in the new batch — i.e. photos that
- *     were removed from Google Drive since last sync. This runs AFTER all
- *     upserts complete, so the gallery always has photos during the operation.
+ * Previous implementation ran `INSERT OR REPLACE` on EVERY photo every sync,
+ * which counts as a D1 row write even when the data is byte-identical. With
+ * auto-sync running every 3 minutes across many galleries, this single
+ * function blew through the 100K writes/day D1 free-tier limit.
  *
- * This makes the sync effectively atomic from the visitor's perspective.
+ * New strategy (write-minimal):
+ *  1. SELECT existing photos (id + comparable fields) for the project.
+ *  2. Partition the incoming batch into:
+ *       - toUpsert  : ids not present in DB, OR present but a field changed → write
+ *       - unchanged : ids present, all fields match → SKIP (0 writes)
+ *  3. DELETE only ids that exist in DB but not in the new batch (write).
+ *
+ * Net effect: a sync where the Drive folder hasn't changed = 0 D1 writes.
+ * The gallery also never appears empty, because deletions run AFTER upserts.
  */
 export async function replaceProjectPhotos(
   projectId: string,
   photos: NewPhotoInput[]
-): Promise<void> {
+): Promise<SyncDelta> {
   const CHUNK_SIZE = 500;
-  // INSERT OR REPLACE so existing rows (same id+projectId) are updated in place
-  // instead of failing on PRIMARY KEY conflict.
-  const upsertSql = `INSERT OR REPLACE INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-  // Step 1: Upsert all new photos in chunks.
-  // During this phase, the gallery shows the previous data + newly added photos.
+  // Fetch existing photos for this project to compute a true delta.
+  // We compare on all user-visible fields EXCEPT aiHidden (that's an
+  // admin-set flag, preserved across syncs — never overwritten by sync).
+  const existing = await db.execute({
+    sql: "SELECT id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime FROM Photo WHERE projectId = ?",
+    args: [projectId],
+  });
+  const existingMap = new Map<
+    string,
+    {
+      name: string;
+      mimeType: string;
+      thumbnailLink: string;
+      webContentLink: string;
+      size: string;
+      createdTime: string;
+      modifiedTime: string;
+    }
+  >();
+  for (const row of existing.rows) {
+    const r = row as Record<string, unknown>;
+    existingMap.set(String(r.id), {
+      name: String(r.name ?? ""),
+      mimeType: String(r.mimeType ?? ""),
+      thumbnailLink: String(r.thumbnailLink ?? ""),
+      webContentLink: String(r.webContentLink ?? ""),
+      size: String(r.size ?? ""),
+      createdTime: String(r.createdTime ?? ""),
+      modifiedTime: String(r.modifiedTime ?? ""),
+    });
+  }
+
   const newIds = new Set<string>();
-  for (let i = 0; i < photos.length; i += CHUNK_SIZE) {
-    const chunk = photos.slice(i, i + CHUNK_SIZE);
-    const stmts = chunk.map((p) => {
-      newIds.add(p.id);
-      return {
+  const toUpsert: NewPhotoInput[] = []; // new + changed
+  let unchanged = 0;
+
+  for (const p of photos) {
+    newIds.add(p.id);
+    const ex = existingMap.get(p.id);
+    if (!ex) {
+      toUpsert.push(p);
+    } else if (
+      ex.name !== p.name ||
+      ex.mimeType !== p.mimeType ||
+      ex.thumbnailLink !== p.thumbnailLink ||
+      ex.webContentLink !== p.webContentLink ||
+      ex.size !== p.size ||
+      ex.createdTime !== p.createdTime ||
+      ex.modifiedTime !== p.modifiedTime
+    ) {
+      toUpsert.push(p);
+    } else {
+      unchanged++;
+    }
+  }
+
+  const toDelete = [...existingMap.keys()].filter((id) => !newIds.has(id));
+
+  // Step 1: Upsert only new + changed photos.
+  if (toUpsert.length > 0) {
+    const upsertSql = `INSERT OR REPLACE INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    for (let i = 0; i < toUpsert.length; i += CHUNK_SIZE) {
+      const chunk = toUpsert.slice(i, i + CHUNK_SIZE);
+      const stmts = chunk.map((p) => ({
         sql: upsertSql,
         args: [
           p.id,
@@ -460,24 +528,14 @@ export async function replaceProjectPhotos(
           p.modifiedTime,
           projectId,
         ],
-      };
-    });
-    await db.batch(stmts);
+      }));
+      await db.batch(stmts);
+    }
   }
 
   // Step 2: Delete only photos that are NOT in the new batch.
-  // This runs AFTER all upserts, so the gallery never appears empty.
-  // We fetch existing IDs first, compute the diff, then delete in chunks.
-  const existing = await db.execute({
-    sql: "SELECT id FROM Photo WHERE projectId = ?",
-    args: [projectId],
-  });
-  const existingIds = existing.rows.map((r) => String((r as Record<string, unknown>).id));
-  const toDelete = existingIds.filter((id) => !newIds.has(id));
-
+  // Runs AFTER upserts, so the gallery never appears empty.
   if (toDelete.length > 0) {
-    // DELETE in chunks using individual statements (libSQL doesn't support
-    // array binding for IN clause; chunk to avoid batch size limits).
     const deleteSql = "DELETE FROM Photo WHERE projectId = ? AND id = ?";
     for (let i = 0; i < toDelete.length; i += CHUNK_SIZE) {
       const chunk = toDelete.slice(i, i + CHUNK_SIZE);
@@ -488,6 +546,12 @@ export async function replaceProjectPhotos(
       await db.batch(stmts);
     }
   }
+
+  return {
+    upserted: toUpsert.length,
+    deleted: toDelete.length,
+    unchanged,
+  };
 }
 
 /**

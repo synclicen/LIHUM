@@ -12,11 +12,13 @@ import {
   replaceProjectPhotos,
   updateProjectSync,
   type NewPhotoInput,
+  type SyncDelta,
 } from "@/lib/queries";
 
 export interface SyncResult {
   success: boolean;
   photoCount: number;
+  syncDelta?: SyncDelta;
   foldersScanned: number;
   driveFoldersCount?: number;
   maxDepthReached: number;
@@ -402,15 +404,14 @@ export async function syncProjectWithToken(
   const lastSyncedAt = new Date().toISOString();
   const syncDelta = await replaceProjectPhotos(projectId, mappedPhotos);
 
-  // CRITICAL: skip updateProjectSync write when nothing changed.
-  // Auto-sync runs every 3m for 52 galleries = 24,960 potential writes/day.
-  // With this skip: 0 writes when nothing changed (the common case).
-  // Only write lastSyncedAt when photos were actually upserted/deleted.
+  // Skip the lastSyncedAt write when nothing changed. Even though auto-sync
+  // has been removed from the frontend, admins can still hit "Sinkron Drive"
+  // repeatedly — this skip ensures a no-op manual sync costs 0 D1 writes.
   if (syncDelta.upserted > 0 || syncDelta.deleted > 0) {
     await updateProjectSync(projectId, mappedPhotos.length, lastSyncedAt);
-    console.log(`[Sync] Project ${projectId}: ${syncDelta.upserted} upserted, ${syncDelta.deleted} deleted — updated lastSyncedAt`);
+    console.log(`[Sync] Project ${projectId}: ${syncDelta.upserted} upserted, ${syncDelta.deleted} deleted, ${syncDelta.unchanged} unchanged — updated lastSyncedAt`);
   } else {
-    console.log(`[Sync] Project ${projectId}: 0 changes — SKIPPED write`);
+    console.log(`[Sync] Project ${projectId}: 0 changes (${syncDelta.unchanged} unchanged) — SKIPPED write`);
   }
 
   return {

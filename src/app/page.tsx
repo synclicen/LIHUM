@@ -228,102 +228,20 @@ export default function App() {
     return () => clearInterval(fetchMetadataInterval);
   }, []);
 
-  // ── Auto-sync scheduler ──
-  // DISABLED: 40 galleries with 30s interval caused Workers CPU limit exceeded.
-  // Each sync = multiple Google Drive API calls (CPU-heavy) + D1 reads.
-  // 40 × 30s = 115,200 syncs/day × ~5 fetch calls = 576,000 Drive API calls/day.
+  // ── Auto-sync scheduler: PERMANENTLY REMOVED ──
+  // Background auto-sync was the root cause of exceeding the Cloudflare D1
+  // free-tier daily limit of 100,000 row writes (email received 2026-11-02).
   //
-  // Admin should sync manually via "Sinkron Drive" button.
-  // To re-enable: admin sets autoSyncEnabled=true per gallery (max 5 galleries).
-  // The scheduler below is kept but only activates when admin is logged in
-  // AND has galleries with autoSyncEnabled=true.
+  // The problem: replaceProjectPhotos used INSERT OR REPLACE on EVERY photo on
+  // every sync cycle. Even when photos were unchanged, each row counted as a
+  // write. With N galleries × P photos × sync-every-3m, writes exploded past
+  // 100K/day and D1 blocked all writes until midnight UTC reset.
   //
-  // After D1 reset, run: UPDATE Project SET autoSyncEnabled=0 WHERE autoSyncInterval='30s'
-  // to convert all 30s intervals to manual (admin can re-enable specific galleries).
-  const projectsRef = useRef<ProjectSummary[]>([]);
-  useEffect(() => {
-    projectsRef.current = projects;
-  }, [projects]);
-
-  useEffect(() => {
-    if (!accessToken || !user) return;
-
-    const allSyncedProjects = projectsRef.current.filter((p) => p.autoSyncEnabled);
-    if (allSyncedProjects.length === 0) return;
-
-    // SAFETY: limit to max 5 galleries to avoid CPU/D1 quota issues.
-    // If admin has more than 5 enabled, only sync the first 5.
-    const syncedProjects = allSyncedProjects.slice(0, 5);
-    if (allSyncedProjects.length > 5) {
-      console.warn(`[Auto-Sync] ${allSyncedProjects.length} galleries have auto-sync enabled, but only 5 will be synced (D1/CPU limit). Disable others or use manual sync.`);
-    }
-
-    const intervals: ReturnType<typeof setInterval>[] = [];
-
-    syncedProjects.forEach((proj) => {
-      let ms = 180000;
-      switch (proj.autoSyncInterval) {
-        case "30s":
-          ms = 30000;
-          break;
-        case "1m":
-          ms = 60000;
-          break;
-        case "3m":
-          ms = 180000;
-          break;
-        case "5m":
-          ms = 300000;
-          break;
-        case "1h":
-          ms = 3600000;
-          break;
-        case "6h":
-          ms = 21600000;
-          break;
-      }
-
-      const runSync = async () => {
-        const currentProj = projectsRef.current.find((p) => p.id === proj.id);
-        if (!currentProj || !currentProj.autoSyncEnabled) return;
-
-        try {
-          console.log(`[Auto-Sync] Syncing "${currentProj.name}"...`);
-          const res = await fetch(`/api/projects/${proj.id}/sync`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "x-user-email": user.email || "",
-            },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.syncDelta) {
-              console.log(`[Auto-Sync] Done "${currentProj.name}": ${data.syncDelta.upserted} new, ${data.syncDelta.deleted} removed, ${data.syncDelta.unchanged} unchanged`);
-            }
-            loadProjects();
-          }
-        } catch (err) {
-          console.error(`[Auto-Sync] Failed for "${currentProj.name}":`, err);
-        }
-      };
-
-      const immediateTimer = setTimeout(runSync, 5000);
-      const intervalId = setInterval(runSync, ms);
-      intervals.push(immediateTimer, intervalId);
-    });
-
-    return () => {
-      intervals.forEach((id) => clearInterval(id));
-    };
-  }, [
-    accessToken,
-    user,
-    projects
-      .filter((p) => p.autoSyncEnabled)
-      .map((p) => `${p.id}-${p.autoSyncInterval}`)
-      .join(","),
-  ]);
+  // Fix: there is NO auto-sync scheduler in the frontend anymore. Admins sync
+  // manually via the "Sinkron Drive" button. The autoSyncEnabled / autoSyncInterval
+  // columns remain in the schema for display purposes only — nothing reads them
+  // to trigger background syncs. Manual sync now uses a true delta (see
+  // replaceProjectPhotos) so 0 writes happen when a Drive folder is unchanged.
 
   return (
     <div
