@@ -209,6 +209,12 @@ export async function ensureSchema(): Promise<void> {
       console.error("[ensureSchema] Table creation failed:", writeErr?.message?.slice(0, 100));
       throw writeErr;
     }
+
+    // CRITICAL: always ensure the needsSync column exists on Project.
+    // If Project was created in a previous deploy (before needsSync existed),
+    // CREATE TABLE IF NOT EXISTS above was a no-op, so the column is missing.
+    // This ensureColumn call adds it idempotently.
+    await ensureColumn("Project", "needsSync", "INTEGER NOT NULL DEFAULT 0");
   })();
   schemaPromise = p;
   try { await p; } catch (err) { schemaPromise = null; throw err; }

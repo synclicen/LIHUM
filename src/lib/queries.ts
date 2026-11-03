@@ -909,6 +909,13 @@ export async function setSetting(key: string, value: string): Promise<void> {
   });
 }
 
+export async function deleteSetting(key: string): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM Setting WHERE key = ?",
+    args: [key],
+  });
+}
+
 // ---------- Camera Global Config (stored as a single JSON Setting) ----------
 export interface CameraConfig {
   filter: string;
