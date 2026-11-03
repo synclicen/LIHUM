@@ -1089,3 +1089,89 @@ Full feature status:
   - AdminPanel UI: ✅ push status badge + manual control + auto-register
   - D1 schema: ✅ needsSync column + DriveWatchChannel table
   - CI/CD: ✅ push-to-deploy automated
+
+---
+Task ID: 33
+Agent: main (Z.ai Code)
+Task: Add "Pengaturan" tab + Maintenance Mode feature (admin-only access + visitor notice).
+
+Reference: User provided 2 screenshots:
+  1. Current AdminPanel tab style (dark theme, gold active, gray inactive)
+  2. Maintenance Mode panel example (toggle + textarea + save button)
+
+Implemented:
+  Backend:
+    - src/lib/queries.ts: getMaintenanceConfig + setMaintenanceConfig
+      (stored as 2 Setting rows: maintenance_enabled, maintenance_message)
+    - src/app/api/settings/maintenance/route.ts:
+      * GET (public) → {enabled, message}
+      * PUT (admin only) → updates config
+
+  Frontend:
+    - src/components/lihum/MaintenanceScreen.tsx (new):
+      * Full-screen notice for non-admin visitors
+      * Animated wrench icon with pulsing rings
+      * Custom admin message displayed prominently
+      * "Coba Lagi" retry button (re-checks maintenance status)
+      * Admin access hint ("Admin? Login untuk mengakses")
+      * Timestamp footer
+      * LIHUM brand mark
+      * Styled dark theme (gold #D4AF37 accent, deep purple bg)
+      * Responsive (mobile 375px verified)
+
+    - src/app/page.tsx:
+      * Polls /api/settings/maintenance every 60s (only when tab visible)
+      * If enabled AND role === null AND !isAdminMode → MaintenanceScreen
+      * Admins always bypass (can access panel to disable)
+      * Waits for status load before showing (no flash on initial load)
+      * Retry button re-fetches status immediately
+
+    - src/components/lihum/AdminPanel.tsx:
+      * New 4th tab: "Pengaturan" (Settings icon, emerald color)
+      * Tab type updated: "projects" | "accounts" | "upload" | "settings"
+      * Maintenance Mode card with:
+        - Header: wrench icon + title + AKTIF badge when enabled
+        - Info banner (amber) explaining the feature
+        - Toggle row: "Aktifkan Maintenance" + subtitle
+        - Textarea: "Pesan Maintenance (Opsional)" with placeholder,
+          maxLength=4000, char counter
+        - Save button with loading state
+        - Live preview hint when active
+      * Lazy loads config when Settings tab opened (once per session)
+      * saveMaintenanceConfig → PUT /api/settings/maintenance
+
+Verified end-to-end:
+  - GET /api/settings/maintenance (public) → {enabled:false, message:''} ✓
+  - PUT without admin → 403 ✓
+  - PUT with admin (synclicen@gmail.com) → success, D1 updated ✓
+  - GET after enable → {enabled:true, message:'Sedang update...'} ✓
+  - Visitor (not logged in) sees MaintenanceScreen:
+    - "Mode Pemeliharaan" heading ✓
+    - Admin's custom message displayed ✓
+    - "Coba Lagi" button present ✓
+    - 0 console errors ✓
+    - Mobile 375px: h1 visible, retry button visible ✓
+  - Disable → visitor sees normal app again (HTTP 200, 58 galleries) ✓
+
+Deploy:
+  - wrangler deploy: version 685011ae
+  - git push origin main: commit e600160
+  - CI/CD auto-deploy: run #106, all 11 steps success (sha e6001608)
+  - Production verified healthy after CI/CD deploy
+
+Security:
+  - GET endpoint is public (must be — visitors need to check status)
+    but only returns {enabled, message} — no sensitive data
+  - PUT endpoint requires admin/manager role (403 otherwise)
+  - Message capped at 4000 chars (prevents abuse)
+  - Admins always bypass maintenance (can access panel to disable)
+  - Git credential helper used for push, then unset (no token in config)
+
+Stage Summary:
+  - ✅ "Pengaturan" tab added to AdminPanel (4th tab)
+  - ✅ Maintenance Mode toggle + custom message textarea
+  - ✅ MaintenanceScreen component (animated, responsive, themed)
+  - ✅ API endpoints (GET public, PUT admin-only)
+  - ✅ End-to-end verified (enable → visitor sees screen → disable → normal)
+  - ✅ Deployed via wrangler + CI/CD auto-deploy verified
+  - ✅ 0 console errors, mobile responsive, footer not needed (full-screen)
