@@ -1033,3 +1033,59 @@ Stage Summary:
   - ✅ Security verified (token check, role checks, unknown channel handling)
   - ✅ Agent Browser verified (desktop + mobile, 0 errors)
   - ⚠️ Git remote not set up (user needs to configure GitHub for CI/CD)
+
+---
+Task ID: 32
+Agent: main (Z.ai Code)
+Task: Set up GitHub CI/CD auto-deploy (push to deploy).
+
+GitHub token: ghp_0Yotlc... (user-provided, valid, username: synclicen)
+
+Steps:
+  1. Verified GitHub token valid (username: synclicen)
+  2. Found existing repo: synclicen/LIHUM (public, TypeScript)
+  3. Added git remote (temporarily with token for push)
+  4. Fetched origin/main — local was AHEAD by 7 commits (fast-forward safe)
+  5. Pushed 7 commits (40aab5e..59dbb0d) to GitHub main ✓
+  6. Removed token from remote URL (security) — set to https://github.com/synclicen/LIHUM.git
+  7. Installed pynacl for GitHub secret encryption
+  8. Set 4 GitHub Secrets (all HTTP 201/204 = success):
+     - CLOUDFLARE_API_TOKEN = cfut_Tj5i5... (Cloudflare Workers token)
+     - CLOUDFLARE_ACCOUNT_ID = d8a5b04ca8fc4894e0541c83899f8d97
+     - DATABASE_URL = file:./db/local.db (for OpenNext build, runtime uses D1)
+     - TURSO_AUTH_TOKEN = not-needed-d1-binding-used (set as Worker secret per deploy.yml)
+  9. CI/CD auto-triggered on push → run #104 completed/success
+  10. Manual trigger (workflow_dispatch) → run #105 completed/success
+      All 11 steps OK: Checkout → Setup Bun → Install → Build → Deploy → Set Secret → Summary
+  11. Cleaned git reflog (git reflog expire + gc) — no token leaked in .git/
+
+Production verified after CI/CD deploy:
+  - Home: HTTP 200 (0.35s) ✓
+  - API projects: HTTP 200 ✓
+  - Drive-webhook: HTTP 200 ✓
+  - Drive-watch (no auth): 403 ✓
+  - Needs-sync (no auth): 403 ✓
+  - needsSync field present in /api/projects ✓
+  - Agent Browser: home renders, 0 console errors, footer sticky ✓
+
+CI/CD now active:
+  - Any future `git push origin main` auto-triggers:
+    Checkout → Build (OpenNext) → Deploy (wrangler) → Set Worker secrets
+  - No more manual wrangler deploy needed
+  - GitHub Secrets stored encrypted in GitHub (not in code)
+
+Stage Summary:
+  - ✅ GitHub remote configured (synclicen/LIHUM)
+  - ✅ 7 commits pushed (includes all Push Notification work)
+  - ✅ 4 GitHub Secrets set
+  - ✅ CI/CD pipeline verified end-to-end (run #105 all 11 steps success)
+  - ✅ Production deploy via CI/CD verified healthy
+  - ✅ Token not leaked (remote URL clean, reflog purged)
+  - ℹ️ Push Notification feature is COMPLETE + LIVE + auto-deploying
+
+Full feature status:
+  - Smart Delta Auto-sync: ✅ live (5m interval, 0 writes when unchanged)
+  - Google Drive Push Notifications: ✅ live (webhook → needsSync → 60s checker)
+  - AdminPanel UI: ✅ push status badge + manual control + auto-register
+  - D1 schema: ✅ needsSync column + DriveWatchChannel table
+  - CI/CD: ✅ push-to-deploy automated
