@@ -916,6 +916,58 @@ export async function deleteSetting(key: string): Promise<void> {
   });
 }
 
+// ---------- Maintenance Mode ----------
+//
+// Stored as two Setting rows: maintenance_enabled (0/1) and maintenance_message
+// (text shown to visitors). When enabled, non-admin visitors see a
+// maintenance notice screen instead of the normal UI. Admins always bypass.
+
+const MAINT_ENABLED_KEY = "maintenance_enabled";
+const MAINT_MESSAGE_KEY = "maintenance_message";
+
+export interface MaintenanceConfig {
+  enabled: boolean;
+  message: string;
+}
+
+export async function getMaintenanceConfig(): Promise<MaintenanceConfig> {
+  const enabledRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [MAINT_ENABLED_KEY],
+  });
+  const messageRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [MAINT_MESSAGE_KEY],
+  });
+  const enabled =
+    enabledRes.rows.length > 0 &&
+    String((enabledRes.rows[0] as Record<string, unknown>).value) === "1";
+  const message =
+    messageRes.rows.length > 0
+      ? String((messageRes.rows[0] as Record<string, unknown>).value)
+      : "";
+  return { enabled, message };
+}
+
+export async function setMaintenanceConfig(
+  enabled: boolean,
+  message: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.batch([
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [MAINT_ENABLED_KEY, enabled ? "1" : "0", now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [MAINT_MESSAGE_KEY, message || "", now],
+    },
+  ]);
+}
+
 // ---------- Camera Global Config (stored as a single JSON Setting) ----------
 export interface CameraConfig {
   filter: string;

@@ -33,6 +33,8 @@ import {
   X,
   Bell,
   BellRing,
+  Settings as SettingsIcon,
+  Wrench,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -78,7 +80,7 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   // Tab control state
   const [activeTab, setActiveTab] = useState<
-    "projects" | "accounts" | "upload"
+    "projects" | "accounts" | "upload" | "settings"
   >("projects");
 
   // Form states
@@ -141,6 +143,14 @@ export default function AdminPanel({
   } | null>(null);
   const [driveWatchLoading, setDriveWatchLoading] = useState(false);
   const [driveWatchError, setDriveWatchError] = useState("");
+
+  // ── Maintenance Mode state ──
+  // Loaded when the Settings tab is opened. Toggle + message textarea.
+  const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+  const [maintenanceLoaded, setMaintenanceLoaded] = useState(false);
 
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
@@ -691,6 +701,69 @@ export default function AdminPanel({
     }, 5 * 60 * 1000); // every 5 minutes
     return () => clearInterval(interval);
   }, [accessToken, userEmail, autoSyncCount, fetchDriveWatchStatus, registerDriveWatch]);
+
+  // ── Maintenance Mode load + save ──
+  //
+  // Loads the current maintenance config from /api/settings/maintenance
+  // when the Settings tab is opened (lazy load, only once per session).
+  // Saves via PUT (admin only).
+
+  const loadMaintenanceConfig = useCallback(async () => {
+    setMaintenanceLoading(true);
+    try {
+      const res = await fetch("/api/settings/maintenance");
+      if (!res.ok) return;
+      const data = await res.json();
+      setMaintenanceEnabled(!!data.enabled);
+      setMaintenanceMessage(data.message || "");
+      setMaintenanceLoaded(true);
+    } catch (err) {
+      console.error("[Maintenance] Load failed:", err);
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  }, []);
+
+  const saveMaintenanceConfig = useCallback(async () => {
+    setMaintenanceSaving(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/settings/maintenance", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({
+          enabled: maintenanceEnabled,
+          message: maintenanceMessage,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || "Gagal menyimpan pengaturan maintenance.");
+        return;
+      }
+      setSuccessMsg(
+        maintenanceEnabled
+          ? "Mode Maintenance AKTIF — pengunjung non-admin akan melihat layar maintenance."
+          : "Mode Maintenance DIMATIKAN — pengunjung dapat mengakses aplikasi normal."
+      );
+      setTimeout(() => setSuccessMsg(""), 5000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menyimpan pengaturan maintenance.");
+    } finally {
+      setMaintenanceSaving(false);
+    }
+  }, [maintenanceEnabled, maintenanceMessage, userEmail]);
+
+  // Load maintenance config when Settings tab is opened (lazy, once).
+  useEffect(() => {
+    if (activeTab === "settings" && !maintenanceLoaded) {
+      loadMaintenanceConfig();
+    }
+  }, [activeTab, maintenanceLoaded, loadMaintenanceConfig]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1721,6 +1794,22 @@ export default function AdminPanel({
             <CloudUpload className="w-4 h-4 text-amber-400" />
             <span>Upload Mandiri</span>
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("settings");
+              setErrorMsg("");
+              setSuccessMsg("");
+            }}
+            className={`pb-2 px-1 text-xs uppercase tracking-wider font-extrabold flex items-center space-x-2 border-b-2 transition-all cursor-pointer ${
+              activeTab === "settings"
+                ? "text-[#D4AF37] border-[#D4AF37]"
+                : "text-slate-400 border-transparent hover:text-white"
+            }`}
+          >
+            <SettingsIcon className="w-4 h-4 text-emerald-400" />
+            <span>Pengaturan</span>
+          </button>
         </div>
       )}
 
@@ -2473,6 +2562,169 @@ export default function AdminPanel({
             </div>
           </div>
 
+        </div>
+      ) : activeTab === "settings" ? (
+        /* Settings Tab view — Maintenance Mode + future settings */
+        <div className="max-w-3xl mx-auto space-y-6">
+          {/* Status Alerts */}
+          {errorMsg && (
+            <div className="flex items-start space-x-2 p-3 bg-red-500/10 border border-red-500/25 text-red-300 rounded-lg text-xs">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+          {successMsg && (
+            <div className="flex items-start space-x-2 p-3 bg-emerald-500/15 border border-emerald-500/25 text-emerald-300 rounded-lg text-xs">
+              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {/* Maintenance Mode Card */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-[#D4AF37]/15">
+              <div className="flex items-center space-x-3">
+                <div className="w-11 h-11 rounded-full bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center">
+                  <Wrench className="w-5 h-5 text-[#D4AF37]" />
+                </div>
+                <div>
+                  <h2 className="font-serif text-lg font-bold text-white">
+                    Mode Maintenance
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Aktifkan untuk membatasi akses hanya untuk admin
+                  </p>
+                </div>
+              </div>
+              {maintenanceEnabled && (
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-bold flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#D4AF37] animate-pulse" />
+                  AKTIF
+                </span>
+              )}
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-5">
+              {/* Info banner */}
+              <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-4">
+                <div className="flex items-start space-x-3">
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-200 mb-1">
+                      Tentang Mode Maintenance
+                    </p>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Saat diaktifkan, hanya admin/manager yang dapat mengakses
+                      aplikasi. Pengunjung lain akan melihat halaman maintenance
+                      dengan pesan yang Anda tulis di bawah.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {maintenanceLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-5 h-5 text-[#D4AF37] animate-spin" />
+                  <span className="ml-2 text-sm text-slate-400">
+                    Memuat pengaturan...
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {/* Toggle row */}
+                  <div className="bg-[#1F0F3D]/50 border border-violet-950/50 rounded-xl p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-white">
+                        Aktifkan Maintenance
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Pengunjung non-admin tidak dapat mengakses aplikasi
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={maintenanceEnabled}
+                        onChange={(e) =>
+                          setMaintenanceEnabled(e.target.checked)
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors" />
+                    </label>
+                  </div>
+
+                  {/* Message textarea */}
+                  <div className="space-y-2">
+                    <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                      Pesan Maintenance{" "}
+                      <span className="text-slate-500 normal-case font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <textarea
+                      value={maintenanceMessage}
+                      onChange={(e) => setMaintenanceMessage(e.target.value)}
+                      placeholder="Contoh: Sedang melakukan update sistem. Estimasi selesai pukul 14:00 WIB."
+                      rows={4}
+                      maxLength={4000}
+                      className="w-full bg-[#1F0F3D]/60 border border-violet-950 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all resize-y min-h-[100px] font-sans"
+                    />
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-slate-500">
+                        Pesan ini akan ditampilkan kepada pengunjung selama
+                        maintenance aktif.
+                      </p>
+                      <span className="text-[10px] text-slate-600 font-mono">
+                        {maintenanceMessage.length}/4000
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Save button */}
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={saveMaintenanceConfig}
+                      disabled={maintenanceSaving}
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4AF37] text-[#0C061A] font-bold text-sm hover:bg-[#E5C158] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {maintenanceSaving ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Menyimpan...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-4 h-4" />
+                          Simpan Pengaturan
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Live preview hint */}
+                  {maintenanceEnabled && (
+                    <div className="bg-[#D4AF37]/5 border border-[#D4AF37]/15 rounded-xl p-3 text-center">
+                      <p className="text-[10px] text-slate-400">
+                        Pengunjung saat ini melihat layar maintenance
+                        {maintenanceMessage.trim()
+                          ? " dengan pesan di atas."
+                          : " tanpa pesan khusus."}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Placeholder for future settings */}
+          <div className="text-center text-[10px] text-slate-600 pt-4">
+            Pengaturan lainnya akan ditambahkan di sini
+          </div>
         </div>
       ) : (
         /* Accounts Management Tab view */

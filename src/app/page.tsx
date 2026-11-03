@@ -6,6 +6,7 @@ import Header from "@/components/lihum/Header";
 import AdminPanel from "@/components/lihum/AdminPanel";
 import GalleryView from "@/components/lihum/GalleryView";
 import ShareModal from "@/components/lihum/ShareModal";
+import MaintenanceScreen from "@/components/lihum/MaintenanceScreen";
 import type { ProjectSummary } from "@/types";
 import {
   initAuth,
@@ -41,6 +42,16 @@ export default function App() {
   );
   const [loading, setLoading] = useState<boolean>(true);
   const [shareProject, setShareProject] = useState<ProjectSummary | null>(null);
+
+  // ── Maintenance Mode state ──
+  // When maintenance is enabled AND the user is NOT an admin/manager,
+  // we render MaintenanceScreen instead of the normal UI. Admins always bypass.
+  // Polled every 60s so visitors see the maintenance screen within ~1 min
+  // of an admin enabling it, and return to normal within ~1 min of disabling.
+  const [maintenance, setMaintenance] = useState<{
+    enabled: boolean;
+    message: string;
+  } | null>(null);
 
   // Gallery search + sort (client-side, 0 Worker requests)
   const [gallerySearch, setGallerySearch] = useState("");
@@ -226,6 +237,32 @@ export default function App() {
     }, 300000); // 5m (was 60s) — reduce D1 reads
 
     return () => clearInterval(fetchMetadataInterval);
+  }, []);
+
+  // ── Maintenance Mode checker ──
+  //
+  // Polls /api/settings/maintenance every 60s (only when tab visible).
+  // If enabled AND user is not admin/manager, renders MaintenanceScreen.
+  // Admins always bypass — they need to access the panel to disable it.
+  //
+  // Cost: 1 fetch per 60s = 1,440 reads/day = 0.03% of D1 5M/day limit.
+  useEffect(() => {
+    const checkMaintenance = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const res = await fetch("/api/settings/maintenance");
+        if (!res.ok) return;
+        const data = await res.json();
+        setMaintenance({ enabled: !!data.enabled, message: data.message || "" });
+      } catch (err) {
+        // Network error — keep last known state (don't blank the screen
+        // during a transient blip). If maintenance was enabled, the visitor
+        // should continue seeing the maintenance screen.
+      }
+    };
+    checkMaintenance();
+    const id = setInterval(checkMaintenance, 60000);
+    return () => clearInterval(id);
   }, []);
 
   // ── Smart Auto-Sync Scheduler ──
@@ -444,6 +481,40 @@ export default function App() {
       .map((p) => `${p.id}-${p.autoSyncInterval}`)
       .join(","),
   ]);
+
+  // ── Maintenance Mode gate ──
+  //
+  // If maintenance is enabled AND the current user is NOT an admin/manager,
+  // render the MaintenanceScreen instead of the normal UI. Admins always
+  // bypass so they can access the panel to disable maintenance.
+  //
+  // We wait for the maintenance status to be loaded (non-null) before showing
+  // the screen, to avoid flashing it during initial page load.
+  const showMaintenanceScreen =
+    maintenance?.enabled === true && role === null && !isAdminMode;
+
+  if (showMaintenanceScreen) {
+    return (
+      <MaintenanceScreen
+        message={maintenance?.message}
+        onRetry={() => {
+          // Re-fetch maintenance status immediately.
+          fetch("/api/settings/maintenance")
+            .then((r) => r.json())
+            .then((data) =>
+              setMaintenance({
+                enabled: !!data.enabled,
+                message: data.message || "",
+              })
+            )
+            .catch(() => {
+              // If fetch fails, reload the whole page as a fallback.
+              window.location.reload();
+            });
+        }}
+      />
+    );
+  }
 
   return (
     <div
