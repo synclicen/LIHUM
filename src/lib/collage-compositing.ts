@@ -274,6 +274,26 @@ export async function detectTemplateSlots(
 }
 
 /**
+ * Returns the aspect ratio (width/height) of the FIRST detected slot.
+ * Used by the /upload page to size the camera preview to match the slot —
+ * so visitor captures photos at the correct aspect ratio for the collage.
+ *
+ * Falls back to 3/4 (portrait, common for photos) if no slots detected.
+ */
+export async function detectSlotAspectRatio(
+  frameDataUrl: string
+): Promise<number> {
+  const slots = await detectTemplateSlots(frameDataUrl);
+  if (slots.length === 0) return 3 / 4; // default portrait
+  // Use the first slot's rotated dimensions (rw × rh) for aspect ratio.
+  // This is the photo's aspect ratio after rotation correction.
+  const first = slots[0];
+  const ratio = first.rw / first.rh;
+  // Clamp to reasonable bounds (0.5 to 2.0) to avoid extreme ratios
+  return Math.max(0.5, Math.min(2.0, ratio));
+}
+
+/**
  * Composites N photos into a collage using a frame PNG template.
  *
  * @param frameDataUrl - Frame PNG (with transparent holes = slots)

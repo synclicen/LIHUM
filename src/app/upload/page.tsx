@@ -21,7 +21,7 @@ import {
   preparePhotoForUpload,
   readFileAsDataURL,
 } from "@/lib/frame-compositing";
-import { compositeCollage, detectTemplateSlots, resizePhoto } from "@/lib/collage-compositing";
+import { compositeCollage, detectTemplateSlots, detectSlotAspectRatio, resizePhoto } from "@/lib/collage-compositing";
 
 // ── Constants ──
 // Server enforces max 15 photos per 10 min per IP. The actual per-session
@@ -83,10 +83,16 @@ function VisitorUploadContent() {
   // ── Collage mode (multi-slot template, ARAY-style) ──
   // When enabled, visitor takes N photos (one per detected slot) → composited
   // into 1 collage output. Overrides single-frame mode.
+  // NOTE: The frame/template overlay is NOT shown on the upload page — visitor
+  // just takes photos at the correct aspect ratio and sees the composed result
+  // in the gallery. This avoids visual chaos from aspect ratio mismatches.
   const [collageConfig, setCollageConfig] = useState<CollageConfig | null>(null);
   const [collageLoading, setCollageLoading] = useState(true);
   // Raw photos for collage slots (NOT individually framed — they'll be composited)
   const [collageSlotPhotos, setCollageSlotPhotos] = useState<string[]>([]);
+  // Aspect ratio (w/h) of the first detected slot — used to size the camera
+  // preview so visitor captures photos at the correct ratio for the slots.
+  const [slotAspectRatio, setSlotAspectRatio] = useState<number>(3 / 4);
 
   // Max photos per session — fetched from /api/config (admin camera config).
   // Falls back to DEFAULT_MAX_PHOTOS if fetch fails.
@@ -185,6 +191,8 @@ function VisitorUploadContent() {
 
   // ── Fetch collage config (once on mount) ──
   // If collage is enabled, it takes priority over single-frame mode.
+  // We also detect the slot aspect ratio so the camera preview can be sized
+  // to match — visitor captures photos at the correct ratio for the slots.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -193,11 +201,15 @@ function VisitorUploadContent() {
         const data = await res.json();
         if (cancelled) return;
         if (data.enabled && data.templateImage) {
-          // Detect slot count from the template PNG
+          // Detect slot count + aspect ratio from the template PNG
           let slotCount = 0;
+          let aspectRatio = 3 / 4;
           try {
             const slots = await detectTemplateSlots(data.templateImage);
             slotCount = slots.length;
+            if (slotCount > 0) {
+              aspectRatio = await detectSlotAspectRatio(data.templateImage);
+            }
           } catch {
             slotCount = 0;
           }
@@ -208,8 +220,8 @@ function VisitorUploadContent() {
               fitMode: data.fitMode === "fit" ? "fit" : "fill",
               slotCount,
             });
+            setSlotAspectRatio(aspectRatio);
           } else {
-            // Template has no detectable slots — disable collage
             setCollageConfig({ enabled: false, templateImage: "", fitMode: "fill", slotCount: 0 });
           }
         } else {
@@ -649,13 +661,12 @@ function VisitorUploadContent() {
 
   // ── Render: main UI ──
   const galleryName = gallery?.name || "Galeri";
-  const frameEnabled = !!frameConfig?.enabled && !!frameConfig?.frameImage;
   const collageActive = !!collageConfig?.enabled && collageConfig.slotCount > 0 && !!collageConfig.templateImage;
-  const overlayImage = collageActive
-    ? collageConfig!.templateImage
-    : frameEnabled
-    ? frameConfig!.frameImage
-    : null;
+  // Camera preview aspect ratio: in collage mode, use the detected slot aspect
+  // ratio so visitor captures photos at the correct ratio. Otherwise default 4:3.
+  const cameraAspectRatioCss = collageActive
+    ? `${slotAspectRatio}`
+    : "4 / 3";
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0C061A] text-slate-100">
@@ -745,6 +756,11 @@ function VisitorUploadContent() {
             {collageActive ? (
               <span className="text-xs text-slate-400">
                 Slot {collageSlotPhotos.length}/{collageConfig!.slotCount}
+                {capturedPhotos.length > 0 && (
+                  <span className="ml-2 text-[#D4AF37]">
+                    • {capturedPhotos.length}/{maxPhotos} collage
+                  </span>
+                )}
               </span>
             ) : capturedPhotos.length > 0 ? (
               <span className="text-xs text-slate-400">
@@ -753,7 +769,10 @@ function VisitorUploadContent() {
             ) : null}
           </div>
 
-          <div className="relative aspect-[4/3] w-full rounded-2xl overflow-hidden bg-[#120A21] border border-[#D4AF37]/25">
+          <div
+            className="relative w-full rounded-2xl overflow-hidden bg-[#120A21] border border-[#D4AF37]/25"
+            style={{ aspectRatio: cameraAspectRatioCss }}
+          >
             {/* Video preview */}
             <video
               ref={videoRef}
@@ -766,15 +785,11 @@ function VisitorUploadContent() {
               aria-label="Preview kamera langsung"
             />
 
-            {/* Frame/template overlay — positioned over the video to give a live preview */}
-            {overlayImage && cameraActive && (
-              <img
-                src={overlayImage}
-                alt={collageActive ? "Template collage" : "Bingkai foto"}
-                className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
-                aria-hidden="true"
-              />
-            )}
+            {/* NOTE: No frame/template overlay on the upload page.
+                Visitor captures photos at the slot's aspect ratio, and sees
+                the composed (framed) result in the gallery. This avoids
+                visual chaos from aspect ratio mismatches between the template
+                overlay and the camera preview container. */}
 
             {/* Idle / placeholder overlay */}
             {!cameraActive && (
@@ -1036,8 +1051,10 @@ function VisitorUploadContent() {
           </section>
         )}
 
-        {/* Rate limit warning */}
-        {capturedPhotos.length >= maxPhotos - 2 &&
+        {/* Rate limit warning — only in single-frame mode (not collage).
+            In collage mode, the slot progress indicator above handles guidance. */}
+        {!collageActive &&
+          capturedPhotos.length >= maxPhotos - 2 &&
           capturedPhotos.length < maxPhotos && (
             <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
