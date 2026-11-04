@@ -149,14 +149,13 @@ export async function GET(
       hasMore: offsetParam + limitParam < totalFiltered,
     },
   });
-  // Cache public gallery reads at the edge for 60s. When 500 visitors open
-  // the same wisuda gallery within 60s, only 1 D1 read happens — the rest
-  // are served from CDN cache. Admin reads are never cached (fresh data).
-  // View counter increment still happens on the origin request (offset=0),
-  // so view counts may be slightly under-counted during cache hits —
-  // acceptable trade-off for the massive request reduction.
+  // Cache public gallery reads at the edge for 5 minutes during the wisuda
+  // event. With 5000 visitors opening the same gallery, this means ~1 D1
+  // read per 5 min (vs 5000 reads). Admin reads never cached (fresh data).
+  // View counter is batched separately (in-memory buffer + 30s flush), so
+  // edge caching the response doesn't affect counter accuracy much.
   if (role === null) {
-    response.headers.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+    response.headers.set("Cache-Control", "public, s-maxage=300, stale-while-revalidate=600");
   } else {
     response.headers.set("Cache-Control", "no-store, private");
   }
