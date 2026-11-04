@@ -1149,7 +1149,7 @@ export default function AdminPanel({
           "Content-Type": "application/json",
           "x-user-email": userEmail,
         },
-        body: JSON.stringify({ limit: 5 }),
+        body: JSON.stringify({ limit: 5, accessToken: accessToken }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1167,7 +1167,7 @@ export default function AdminPanel({
     } finally {
       setDriveSyncSyncing(false);
     }
-  }, [userEmail, loadDriveSyncStatus]);
+  }, [userEmail, accessToken, loadDriveSyncStatus]);
 
   const disconnectDriveSync = useCallback(async () => {
     if (!confirm("Putuskan koneksi Google Drive? Foto visitor tidak akan sync otomatis sampai Anda login ulang.")) return;

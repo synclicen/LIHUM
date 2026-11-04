@@ -643,13 +643,28 @@ interface PendingVisitorPhoto {
  * Returns a summary: { synced, failed, remaining }.
  */
 export async function syncVisitorPhotosToDrive(
-  limit = 5
+  limit = 5,
+  directAccessToken?: string
 ): Promise<VisitorPhotoSyncResult> {
-  // 1. Refresh token must be configured.
-  const refreshToken = await getDriveSyncRefreshToken();
-  if (!refreshToken) {
-    // Nothing to do — admin hasn't connected their Google account.
-    return { synced: 0, failed: 0, remaining: 0 };
+  // 1. Get access token — either passed directly from admin browser (preferred)
+  //    or exchange refresh token (fallback, may not work for Google OAuth).
+  let accessToken: string;
+
+  if (directAccessToken) {
+    accessToken = directAccessToken;
+  } else {
+    const refreshToken = await getDriveSyncRefreshToken();
+    if (!refreshToken) {
+      return { synced: 0, failed: 0, remaining: 0 };
+    }
+    try {
+      accessToken = await exchangeRefreshTokenForAccessToken(refreshToken);
+    } catch (err: any) {
+      console.error(
+        `[DriveSync] Failed to obtain access token: ${err?.message || err}`
+      );
+      return { synced: 0, failed: 0, remaining: 0 };
+    }
   }
 
   // 2. Fetch pending visitor photos. We JOIN Project so we only pick photos
@@ -672,19 +687,6 @@ export async function syncVisitorPhotosToDrive(
     // Still record the sync attempt so the admin UI's "last sync" updates.
     await setSetting(LAST_DRIVE_SYNC_KEY, new Date().toISOString());
     return { synced: 0, failed: 0, remaining: 0 };
-  }
-
-  // 3. Exchange refresh token for short-lived access token.
-  let accessToken: string;
-  try {
-    accessToken = await exchangeRefreshTokenForAccessToken(refreshToken);
-  } catch (err: any) {
-    console.error(
-      `[DriveSync] Failed to obtain access token: ${err?.message || err}`
-    );
-    // Don't write last_sync — the sync didn't actually run. Admin can see
-    // the same error in Worker logs (Cloudflare dashboard).
-    return { synced: 0, failed: 0, remaining: pending.length };
   }
 
   // 4. Upload each pending photo. Continue on individual failure so one

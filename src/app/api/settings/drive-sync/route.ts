@@ -63,12 +63,13 @@ export async function GET(req: NextRequest) {
  * Triggers a single sync pass: up to 5 visitor photos are uploaded to Drive
  * (per Worker CPU limit). Call repeatedly to drain a larger backlog.
  *
- * Optional body: { limit?: number } — clamped to [1, 10].
+ * Body: { limit?: number, accessToken?: string }
+ *   - limit: clamped to [1, 10], defaults to 5
+ *   - accessToken: admin's Google OAuth access token (from Firebase signInWithPopup).
+ *     Passed directly from the admin's browser — this is a real Google OAuth
+ *     token with Drive scope, unlike Firebase refresh tokens.
  *
  * Response: { synced, failed, remaining }
- *   - synced:     photos uploaded + DB updated this pass
- *   - failed:     photos that errored (upload OR DB update)
- *   - remaining:  photos still pending across the whole table
  */
 export async function POST(req: NextRequest) {
   await ensureSeed();
@@ -81,23 +82,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Parse optional `limit` from the JSON body. Don't fail on empty body —
-  // POSTing with no body is the common case (uses default limit of 5).
+  // Parse body for limit + optional accessToken from admin browser
   let limit = 5;
+  let accessToken: string | undefined;
   try {
     const body = await req.json();
     if (body && typeof body.limit === "number") {
       const requested = Math.floor(body.limit);
       if (requested > 0) limit = Math.min(requested, 10);
     }
+    if (body && typeof body.accessToken === "string" && body.accessToken.length > 10) {
+      accessToken = body.accessToken;
+    }
   } catch {
     // Body wasn't JSON (or was empty) — fall back to default limit.
   }
 
   try {
-    const result = await syncVisitorPhotosToDrive(limit);
+    const result = await syncVisitorPhotosToDrive(limit, accessToken);
     console.log(
-      `[DriveSync] Sync triggered by ${userEmail}: synced=${result.synced} failed=${result.failed} remaining=${result.remaining}`
+      `[DriveSync] Sync triggered by ${userEmail}: synced=${result.synced} failed=${result.failed} remaining=${result.remaining} (tokenSource: ${accessToken ? 'browser' : 'refresh'})`
     );
     return NextResponse.json(result);
   } catch (err: any) {
