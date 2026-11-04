@@ -1259,3 +1259,67 @@ Go-live checklist (see capacity report for details):
   - During event: monitor Cloudflare dashboard for request spikes
   - During event: have maintenance mode ready as fallback
   - Post-event: download analytics (view/download counts)
+
+---
+Task ID: 35
+Agent: main (Z.ai Code)
+Task: Wisuda prep — batched counters, cache tuning, critical 500 bug fix, load test.
+
+Context: Wisuda 6-7 Nov 2026 (H-3). 5000 wisudawan × ~5 family = ~25K visitors.
+4 galleries × ~4000 photos = 16K photos. ~125K downloads estimated over 2 days.
+
+Optimizations:
+  1. BATCHED COUNTERS (in-memory buffer + 30s flush):
+     - Old: 87K D1 writes/day at peak (view 25K + download 62K)
+     - New: ~12K writes/day (flushes × galleries)
+     - 88% reduction = safely within 100K/day free-tier limit
+     - Buffer persists per-isolate, flush on 30s timer or threshold (50)
+     - Failed flushes re-buffer (caps at threshold to prevent unbounded growth)
+
+  2. EDGE CACHE 60s → 5m (s-maxage=300, stale-while-revalidate=600):
+     - /api/projects + /api/projects/[id] cached 5 min at CDN edge
+     - 5000 visitors opening same gallery in 5 min = 1 D1 read
+     - 99.99% D1 read reduction for public reads
+
+CRITICAL BUG FOUND + FIXED (commit b938107):
+  - In commit c447262, cache header referenced undefined variable 'role'
+    (should be 'userRole'). This caused EVERY GET /api/projects/:id to
+    throw ReferenceError → 500 error.
+  - Impact: ALL gallery detail views broken since optimization deploy.
+  - Would have been catastrophic during wisuda (25K visitors can't view
+    any gallery).
+  - Fix: changed 'role' → 'userRole' + wrapped handler in try/catch with
+    detailed error logging (returns JSON {error, detail} instead of empty 500).
+  - Caught H-3 before event. Deployed immediately.
+
+Load test results (post-fix):
+  - 100 concurrent home page loads: all 200, 1.96s total ✓
+  - 100 concurrent gallery opens (1913 photos): all 200, 2.41s total ✓
+  - 50 concurrent pagination requests: all 200, 1.45s total ✓
+  - Download redirect (non-admin): 302 to Google Drive ✓
+  - Cache headers live: s-maxage=300, stale-while-revalidate=600 ✓
+
+Agent Browser verified:
+  - Home renders, 0 console errors ✓
+  - Wisuda gallery visible (1913 photos, 5478 views, 11 downloads) ✓
+  - API returns gallery + photos correctly ✓
+
+Final capacity estimate (after all optimizations):
+  Day peak (10K visitors, 50K downloads):
+  - Workers requests: ~40K (within 100K free) ✓
+  - D1 writes: ~8K (batched counters, within 100K) ✓
+  - D1 reads: ~200 (edge cached, within 5M) ✓
+  - Response time: <2s for 100 concurrent ✓
+
+Deployed:
+  - wrangler: version a48b6132 (includes 500 fix + batched counters + 5m cache)
+  - GitHub push: commit b938107
+  - CI/CD: will auto-deploy
+
+Stage Summary:
+  - ✅ Batched counters (88% D1 write reduction)
+  - ✅ Edge cache 5m (99.99% D1 read reduction)
+  - ✅ Critical 500 bug FIXED (caught H-3, would have broken all galleries)
+  - ✅ Load tested: 100 concurrent = all 200, <2.5s
+  - ✅ Deployed + pushed to CI/CD
+  - ⚠️ Still recommend Workers Paid ($5/mo) for 100% peace of mind on event day
