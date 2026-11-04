@@ -1130,6 +1130,82 @@ export async function setVisitorFrameConfig(
   ]);
 }
 
+// ---------- Collage Template (multi-slot frame, ARAY-style) ----------
+//
+// Admin uploads a PNG template with transparent holes (slots). The system
+// auto-detects slots via alpha channel + computes rotation angle via image
+// moments (ported from ARAY v4.7.67). Photos are drawn into slots at any
+// angle (horizontal, vertical, tilted). Fit mode = contain (no crop) or
+// fill (cover, crop).
+//
+// Stored as 3 Setting rows:
+//   collage_enabled (0/1) — whether collage mode is active
+//   collage_image (base64 PNG data URL) — the template with transparent holes
+//   collage_fit_mode ("fit" | "fill") — how photos fill slots
+
+const COLLAGE_ENABLED_KEY = "collage_enabled";
+const COLLAGE_IMAGE_KEY = "collage_image";
+const COLLAGE_FIT_KEY = "collage_fit_mode";
+
+export interface CollageConfig {
+  enabled: boolean;
+  templateImage: string; // base64 data URL PNG with transparent holes
+  fitMode: "fit" | "fill";
+}
+
+export async function getCollageConfig(): Promise<CollageConfig> {
+  const enabledRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [COLLAGE_ENABLED_KEY],
+  });
+  const imageRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [COLLAGE_IMAGE_KEY],
+  });
+  const fitRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [COLLAGE_FIT_KEY],
+  });
+  const enabled =
+    enabledRes.rows.length > 0 &&
+    String((enabledRes.rows[0] as Record<string, unknown>).value) === "1";
+  const templateImage =
+    imageRes.rows.length > 0
+      ? String((imageRes.rows[0] as Record<string, unknown>).value)
+      : "";
+  const fitModeRaw =
+    fitRes.rows.length > 0
+      ? String((fitRes.rows[0] as Record<string, unknown>).value)
+      : "fill";
+  const fitMode: "fit" | "fill" = fitModeRaw === "fit" ? "fit" : "fill";
+  return { enabled, templateImage, fitMode };
+}
+
+export async function setCollageConfig(
+  enabled: boolean,
+  templateImage: string,
+  fitMode: "fit" | "fill"
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.batch([
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [COLLAGE_ENABLED_KEY, enabled ? "1" : "0", now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [COLLAGE_IMAGE_KEY, templateImage || "", now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [COLLAGE_FIT_KEY, fitMode, now],
+    },
+  ]);
+}
+
 // ---------- Camera Global Config (stored as a single JSON Setting) ----------
 export interface CameraConfig {
   filter: string;

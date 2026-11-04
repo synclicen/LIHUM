@@ -162,6 +162,18 @@ export default function AdminPanel({
   const [frameSaving, setFrameSaving] = useState(false);
   const [frameLoaded, setFrameLoaded] = useState(false);
 
+  // ── Collage Template state (multi-slot, ARAY-style) ──
+  // Admin uploads a PNG template with transparent holes (slots). System
+  // auto-detects slots via alpha channel + rotation angle (ported from ARAY).
+  // Visitor takes N photos → composited into 1 collage output.
+  const [collageEnabled, setCollageEnabled] = useState(false);
+  const [collageImage, setCollageImage] = useState(""); // base64 data URL
+  const [collageFitMode, setCollageFitMode] = useState<"fit" | "fill">("fill");
+  const [collageSlotCount, setCollageSlotCount] = useState(0); // detected slots
+  const [collageLoading, setCollageLoading] = useState(false);
+  const [collageSaving, setCollageSaving] = useState(false);
+  const [collageLoaded, setCollageLoaded] = useState(false);
+
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
 
@@ -898,6 +910,111 @@ export default function AdminPanel({
       setErrorMsg("");
     };
     reader.onerror = () => setErrorMsg("Gagal membaca file frame.");
+    reader.readAsDataURL(file);
+  }, []);
+
+  // ── Collage Template load + save ──
+  const loadCollageConfig = useCallback(async () => {
+    setCollageLoading(true);
+    try {
+      const res = await fetch("/api/settings/collage-template");
+      if (!res.ok) return;
+      const data = await res.json();
+      setCollageEnabled(!!data.enabled);
+      setCollageImage(data.templateImage || "");
+      setCollageFitMode(data.fitMode === "fit" ? "fit" : "fill");
+      setCollageLoaded(true);
+      // Detect slot count from the template PNG
+      if (data.templateImage) {
+        try {
+          const { detectTemplateSlots } = await import("@/lib/collage-compositing");
+          const slots = await detectTemplateSlots(data.templateImage);
+          setCollageSlotCount(slots.length);
+        } catch {
+          setCollageSlotCount(0);
+        }
+      } else {
+        setCollageSlotCount(0);
+      }
+    } catch (err) {
+      console.error("[Collage] Load failed:", err);
+    } finally {
+      setCollageLoading(false);
+    }
+  }, []);
+
+  const saveCollageConfig = useCallback(async () => {
+    setCollageSaving(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/settings/collage-template", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({
+          enabled: collageEnabled,
+          templateImage: collageImage,
+          fitMode: collageFitMode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || "Gagal menyimpan template collage.");
+        return;
+      }
+      setSuccessMsg(
+        collageEnabled
+          ? `Collage Mode AKTIF — visitor akan ambil ${collageSlotCount} foto per output.`
+          : "Collage Mode DIMATIKAN."
+      );
+      setTimeout(() => setSuccessMsg(""), 5000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menyimpan template collage.");
+    } finally {
+      setCollageSaving(false);
+    }
+  }, [collageEnabled, collageImage, collageFitMode, collageSlotCount, userEmail]);
+
+  // Load collage config when Upload Mandiri tab is opened (lazy, once).
+  useEffect(() => {
+    if (activeTab === "upload" && !collageLoaded) {
+      loadCollageConfig();
+    }
+  }, [activeTab, collageLoaded, loadCollageConfig]);
+
+  // Handle collage template file upload (PNG with transparent holes)
+  const handleCollageFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/png")) {
+      setErrorMsg("Template harus berupa file PNG (dengan transparansi untuk slot).");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMsg("Template terlalu besar (maks 2MB). Kompres PNG atau kurangi resolusi.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      setCollageImage(dataUrl);
+      setErrorMsg("");
+      // Detect slot count immediately so admin sees feedback
+      try {
+        const { detectTemplateSlots } = await import("@/lib/collage-compositing");
+        const slots = await detectTemplateSlots(dataUrl);
+        setCollageSlotCount(slots.length);
+        if (slots.length === 0) {
+          setErrorMsg("Tidak ada slot transparan terdeteksi. Pastikan PNG memiliki area transparan (hole) untuk foto.");
+        }
+      } catch {
+        setCollageSlotCount(0);
+      }
+    };
+    reader.onerror = () => setErrorMsg("Gagal membaca file template.");
     reader.readAsDataURL(file);
   }, []);
 
@@ -2550,6 +2667,192 @@ export default function AdminPanel({
                     <CheckCircle className="w-3.5 h-3.5" />
                   )}
                   {frameSaving ? "Menyimpan..." : "Simpan Frame"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Collage Template (multi-slot, ARAY-style) ──
+              Admin uploads a PNG template with transparent holes. System
+              auto-detects slots + rotation angle (ported from ARAY v4.7.67).
+              Visitor takes N photos → composited into 1 collage output. */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center space-x-2.5 mb-4 pb-3 border-b border-violet-900/30">
+              <Sparkles className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-sm font-serif font-bold text-white">
+                Collage Mode (Multi-Slot)
+              </h3>
+            </div>
+
+            {collageLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <RefreshCw className="w-4 h-4 text-[#D4AF37] animate-spin" />
+                <span className="ml-2 text-xs text-slate-400">Memuat...</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Upload template PNG dengan <strong>area transparan (hole)</strong> sebagai
+                  slot foto. Sistem otomatis mendeteksi slot + sudut rotasi
+                  (mendukung slot horizontal, vertikal, miring). Visitor mengambil
+                  N foto sesuai jumlah slot → otomatis di-composite menjadi 1 foto
+                  dengan frame. (Ported dari ARAY v4.7.67)
+                </p>
+
+                {/* Collage toggle */}
+                <div className="bg-[#1F0F3D]/50 border border-violet-950/50 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-white">Aktifkan Collage Mode</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Visitor ambil beberapa foto → 1 output collage
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={collageEnabled}
+                      onChange={(e) => setCollageEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors" />
+                  </label>
+                </div>
+
+                {/* Template upload + preview */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                    Template PNG (dengan transparansi)
+                  </label>
+                  <div className="flex gap-3">
+                    {/* Preview with checkerboard background to show transparency */}
+                    <div
+                      className="w-24 h-24 rounded-xl border border-violet-950 overflow-hidden flex items-center justify-center shrink-0 relative"
+                      style={{
+                        backgroundColor: "#0C061A",
+                        backgroundImage:
+                          "linear-gradient(45deg, #1F0F3D 25%, transparent 25%), linear-gradient(-45deg, #1F0F3D 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1F0F3D 75%), linear-gradient(-45deg, transparent 75%, #1F0F3D 75%)",
+                        backgroundSize: "16px 16px",
+                        backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px",
+                      }}
+                    >
+                      {collageImage ? (
+                        <img
+                          src={collageImage}
+                          alt="Template preview"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <span className="text-[8px] text-slate-600 text-center px-1">
+                          Belum ada template
+                        </span>
+                      )}
+                    </div>
+                    {/* Upload button */}
+                    <div className="flex-1 flex flex-col gap-2">
+                      <label className="cursor-pointer">
+                        <div className="px-3 py-2 rounded-xl bg-[#1F0F3D]/80 border border-violet-950 text-[11px] font-bold text-slate-300 hover:border-[#D4AF37]/40 hover:text-white transition-all flex items-center justify-center gap-1.5">
+                          <CloudUpload className="w-3.5 h-3.5" />
+                          Pilih Template PNG
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/png"
+                          onChange={handleCollageFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                      {collageImage && (
+                        <button
+                          type="button"
+                          onClick={() => { setCollageImage(""); setCollageSlotCount(0); }}
+                          className="px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/25 text-[10px] font-bold text-red-300 hover:bg-red-500/20 transition-all"
+                        >
+                          Hapus Template
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Slot count indicator (auto-detected) */}
+                  {collageImage && (
+                    <div className={`text-[10px] px-3 py-2 rounded-lg border ${
+                      collageSlotCount > 0
+                        ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
+                        : "bg-amber-500/10 border-amber-500/25 text-amber-300"
+                    }`}>
+                      {collageSlotCount > 0 ? (
+                        <span>
+                          ✓ Terdeteksi <strong>{collageSlotCount} slot</strong> foto.
+                          Visitor akan ambil {collageSlotCount} foto per output.
+                        </span>
+                      ) : (
+                        <span>
+                          ⚠ Tidak ada slot transparan terdeteksi. Pastikan PNG
+                          punya area transparan (hole) untuk foto.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Fit mode selector */}
+                {collageImage && collageSlotCount > 0 && (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                      Mode Foto (Fit/Fill)
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCollageFitMode("fill")}
+                        className={`py-2 px-3 rounded-xl text-[11px] font-bold border transition-all ${
+                          collageFitMode === "fill"
+                            ? "bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]"
+                            : "bg-[#1F0F3D]/60 border-violet-950 text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Fill (Cover)
+                        <span className="block text-[8px] font-normal mt-0.5 opacity-70">
+                          Penuhi slot, crop jika perlu
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCollageFitMode("fit")}
+                        className={`py-2 px-3 rounded-xl text-[11px] font-bold border transition-all ${
+                          collageFitMode === "fit"
+                            ? "bg-[#D4AF37]/20 border-[#D4AF37] text-[#D4AF37]"
+                            : "bg-[#1F0F3D]/60 border-violet-950 text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Fit (Contain)
+                        <span className="block text-[8px] font-normal mt-0.5 opacity-70">
+                          Seluruh foto terlihat, mungkin ada border hitam
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[9px] text-slate-500 leading-relaxed">
+                  PNG dengan transparansi, maks 2MB. Template di-render pada
+                  dimensi naturalnya (tidak di-stretch). Slot dengan rotasi
+                  (miring) didukung — sistem menghitung sudut via image moments.
+                </p>
+
+                {/* Save collage config button */}
+                <button
+                  type="button"
+                  onClick={saveCollageConfig}
+                  disabled={collageSaving}
+                  className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] text-[11px] font-extrabold uppercase tracking-wider hover:bg-[#dfbb66] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {collageSaving ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-3.5 h-3.5" />
+                  )}
+                  {collageSaving ? "Menyimpan..." : "Simpan Collage"}
                 </button>
               </div>
             )}

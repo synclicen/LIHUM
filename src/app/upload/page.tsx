@@ -21,6 +21,7 @@ import {
   preparePhotoForUpload,
   readFileAsDataURL,
 } from "@/lib/frame-compositing";
+import { compositeCollage, detectTemplateSlots, resizePhoto } from "@/lib/collage-compositing";
 
 // ── Constants ──
 // Server enforces max 15 photos per 10 min per IP. We also cap the session.
@@ -38,6 +39,13 @@ interface GalleryInfo {
 interface FrameConfig {
   enabled: boolean;
   frameImage: string;
+}
+
+interface CollageConfig {
+  enabled: boolean;
+  templateImage: string;
+  fitMode: "fit" | "fill";
+  slotCount: number; // detected from PNG
 }
 
 type LoadState = "loading" | "ready" | "error" | "forbidden";
@@ -68,6 +76,14 @@ function VisitorUploadContent() {
 
   const [frameConfig, setFrameConfig] = useState<FrameConfig | null>(null);
   const [frameLoading, setFrameLoading] = useState(true);
+
+  // ── Collage mode (multi-slot template, ARAY-style) ──
+  // When enabled, visitor takes N photos (one per detected slot) → composited
+  // into 1 collage output. Overrides single-frame mode.
+  const [collageConfig, setCollageConfig] = useState<CollageConfig | null>(null);
+  const [collageLoading, setCollageLoading] = useState(true);
+  // Raw photos for collage slots (NOT individually framed — they'll be composited)
+  const [collageSlotPhotos, setCollageSlotPhotos] = useState<string[]>([]);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
@@ -145,6 +161,51 @@ function VisitorUploadContent() {
         setFrameConfig({ enabled: false, frameImage: "" });
       } finally {
         if (!cancelled) setFrameLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Fetch collage config (once on mount) ──
+  // If collage is enabled, it takes priority over single-frame mode.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/settings/collage-template`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.enabled && data.templateImage) {
+          // Detect slot count from the template PNG
+          let slotCount = 0;
+          try {
+            const slots = await detectTemplateSlots(data.templateImage);
+            slotCount = slots.length;
+          } catch {
+            slotCount = 0;
+          }
+          if (slotCount > 0) {
+            setCollageConfig({
+              enabled: true,
+              templateImage: data.templateImage,
+              fitMode: data.fitMode === "fit" ? "fit" : "fill",
+              slotCount,
+            });
+          } else {
+            // Template has no detectable slots — disable collage
+            setCollageConfig({ enabled: false, templateImage: "", fitMode: "fill", slotCount: 0 });
+          }
+        } else {
+          setCollageConfig({ enabled: false, templateImage: "", fitMode: "fill", slotCount: 0 });
+        }
+      } catch {
+        if (cancelled) return;
+        setCollageConfig({ enabled: false, templateImage: "", fitMode: "fill", slotCount: 0 });
+      } finally {
+        if (!cancelled) setCollageLoading(false);
       }
     })();
 
@@ -274,6 +335,62 @@ function VisitorUploadContent() {
       setCameraError("Video belum siap. Tunggu beberapa detik lalu coba lagi.");
       return;
     }
+
+    // ── Collage mode: capture RAW photo (no single frame) for a slot ──
+    if (collageConfig?.enabled && collageConfig.slotCount > 0) {
+      if (collageSlotPhotos.length >= collageConfig.slotCount) {
+        setCameraError("Semua slot sudah terisi. Upload atau hapus slot untuk mengulang.");
+        return;
+      }
+      setProcessing(true);
+      try {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        const maxDim = 1920;
+        const scale = Math.min(maxDim / vw, maxDim / vh, 1);
+        const cw = Math.round(vw * scale);
+        const ch = Math.round(vh * scale);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Canvas 2D context tidak tersedia");
+        if (facingMode === "user") {
+          ctx.translate(cw, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, cw, ch);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        const rawDataUrl = canvas.toDataURL("image/jpeg", PHOTO_QUALITY);
+        // Resize only (no single frame — collage composites all slots later)
+        const resized = await resizePhoto(rawDataUrl, 1600);
+        const newSlots = [...collageSlotPhotos, resized];
+        setCollageSlotPhotos(newSlots);
+
+        // If all slots filled → composite into 1 photo + add to upload queue
+        if (newSlots.length >= collageConfig.slotCount) {
+          const composite = await compositeCollage(
+            collageConfig.templateImage,
+            newSlots,
+            collageConfig.fitMode
+          );
+          if (composite) {
+            setCapturedPhotos((prev) => [...prev, composite]);
+          } else {
+            setCameraError("Gagal membuat collage. Coba lagi.");
+          }
+          setCollageSlotPhotos([]); // reset for next collage
+        }
+      } catch (err: any) {
+        setCameraError(err.message || "Gagal mengambil foto.");
+      } finally {
+        setProcessing(false);
+      }
+      return;
+    }
+
+    // ── Single-frame mode (existing behavior) ──
     if (capturedPhotos.length >= MAX_PHOTOS_PER_SESSION) {
       setCameraError(
         `Anda telah mencapai batas ${MAX_PHOTOS_PER_SESSION} foto per sesi. Upload dulu sebelum menambah lagi.`
@@ -286,8 +403,6 @@ function VisitorUploadContent() {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // Use a max dimension of 1920 for raw capture, then preparePhotoForUpload
-      // will resize down to 1600px.
       const maxDim = 1920;
       const scale = Math.min(maxDim / vw, maxDim / vh, 1);
       const cw = Math.round(vw * scale);
@@ -299,7 +414,6 @@ function VisitorUploadContent() {
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Canvas 2D context tidak tersedia");
 
-      // Mirror for selfie camera for natural feel
       if (facingMode === "user") {
         ctx.translate(cw, 0);
         ctx.scale(-1, 1);
@@ -318,7 +432,7 @@ function VisitorUploadContent() {
     } finally {
       setProcessing(false);
     }
-  }, [capturedPhotos.length, facingMode, frameConfig]);
+  }, [capturedPhotos.length, facingMode, frameConfig, collageConfig, collageSlotPhotos]);
 
   // ── Handle file upload ──
   const handleFileSelect = useCallback(
@@ -328,6 +442,53 @@ function VisitorUploadContent() {
 
       setProcessing(true);
       setCameraError("");
+
+      // ── Collage mode: fill slots from selected files ──
+      if (collageConfig?.enabled && collageConfig.slotCount > 0) {
+        try {
+          const remaining = collageConfig.slotCount - collageSlotPhotos.length;
+          const toProcess = Array.from(files)
+            .filter((f) => f.type.startsWith("image/"))
+            .slice(0, remaining);
+
+          if (Array.from(files).length > remaining) {
+            setCameraError(
+              `Hanya ${remaining} foto yang diproses (slot tersisa).`
+            );
+          }
+
+          const newSlots: string[] = [];
+          for (const file of toProcess) {
+            const dataUrl = await readFileAsDataURL(file);
+            const resized = await resizePhoto(dataUrl, 1600);
+            newSlots.push(resized);
+          }
+
+          const allSlots = [...collageSlotPhotos, ...newSlots];
+          setCollageSlotPhotos(allSlots);
+
+          // If all slots filled → composite
+          if (allSlots.length >= collageConfig.slotCount) {
+            const composite = await compositeCollage(
+              collageConfig.templateImage,
+              allSlots,
+              collageConfig.fitMode
+            );
+            if (composite) {
+              setCapturedPhotos((prev) => [...prev, composite]);
+            }
+            setCollageSlotPhotos([]);
+          }
+        } catch (err: any) {
+          setCameraError(err.message || "Gagal memproses file.");
+        } finally {
+          setProcessing(false);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+        return;
+      }
+
+      // ── Single-frame mode (existing behavior) ──
       try {
         const remaining = MAX_PHOTOS_PER_SESSION - capturedPhotos.length;
         const toProcess = Array.from(files).slice(0, remaining);
@@ -355,18 +516,22 @@ function VisitorUploadContent() {
         setCameraError(err.message || "Gagal memproses file.");
       } finally {
         setProcessing(false);
-        // Reset file input so the same file can be selected again
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
       }
     },
-    [capturedPhotos.length, frameConfig]
+    [capturedPhotos.length, frameConfig, collageConfig, collageSlotPhotos]
   );
 
   // ── Remove a photo ──
   const removePhoto = useCallback((index: number) => {
     setCapturedPhotos((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // ── Remove a collage slot photo ──
+  const removeSlotPhoto = useCallback((index: number) => {
+    setCollageSlotPhotos((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   // ── Upload all photos ──
@@ -471,6 +636,12 @@ function VisitorUploadContent() {
   // ── Render: main UI ──
   const galleryName = gallery?.name || "Galeri";
   const frameEnabled = !!frameConfig?.enabled && !!frameConfig?.frameImage;
+  const collageActive = !!collageConfig?.enabled && collageConfig.slotCount > 0 && !!collageConfig.templateImage;
+  const overlayImage = collageActive
+    ? collageConfig!.templateImage
+    : frameEnabled
+    ? frameConfig!.frameImage
+    : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0C061A] text-slate-100">
@@ -553,13 +724,19 @@ function VisitorUploadContent() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
               <Camera className="w-4 h-4 text-[#D4AF37]" />
-              Ambil Foto
+              {collageActive
+                ? `Ambil Foto (Collage ${collageConfig!.slotCount} Slot)`
+                : "Ambil Foto"}
             </h2>
-            {capturedPhotos.length > 0 && (
+            {collageActive ? (
+              <span className="text-xs text-slate-400">
+                Slot {collageSlotPhotos.length}/{collageConfig!.slotCount}
+              </span>
+            ) : capturedPhotos.length > 0 ? (
               <span className="text-xs text-slate-400">
                 {capturedPhotos.length}/{MAX_PHOTOS_PER_SESSION} foto
               </span>
-            )}
+            ) : null}
           </div>
 
           <div className="relative aspect-[4/3] w-full rounded-2xl overflow-hidden bg-[#120A21] border border-[#D4AF37]/25">
@@ -575,11 +752,11 @@ function VisitorUploadContent() {
               aria-label="Preview kamera langsung"
             />
 
-            {/* Frame overlay — positioned over the video to give a live preview */}
-            {frameEnabled && cameraActive && (
+            {/* Frame/template overlay — positioned over the video to give a live preview */}
+            {overlayImage && cameraActive && (
               <img
-                src={frameConfig!.frameImage}
-                alt="Bingkai foto"
+                src={overlayImage}
+                alt={collageActive ? "Template collage" : "Bingkai foto"}
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
                 aria-hidden="true"
               />
@@ -588,10 +765,12 @@ function VisitorUploadContent() {
             {/* Idle / placeholder overlay */}
             {!cameraActive && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
-                {frameLoading ? (
+                {(frameLoading || collageLoading) ? (
                   <>
                     <Loader2 className="w-8 h-8 animate-spin text-[#D4AF37]" />
-                    <p className="text-xs text-slate-400">Memuat bingkai…</p>
+                    <p className="text-xs text-slate-400">
+                      {collageLoading ? "Memuat template…" : "Memuat bingkai…"}
+                    </p>
                   </>
                 ) : (
                   <>
@@ -672,7 +851,12 @@ function VisitorUploadContent() {
                 <button
                   type="button"
                   onClick={handleCapture}
-                  disabled={processing || capturedPhotos.length >= MAX_PHOTOS_PER_SESSION}
+                  disabled={
+                    processing ||
+                    (collageActive
+                      ? collageSlotPhotos.length >= collageConfig!.slotCount
+                      : capturedPhotos.length >= MAX_PHOTOS_PER_SESSION)
+                  }
                   aria-label="Ambil foto"
                   title="Ambil foto"
                   className="w-16 h-16 rounded-full bg-[#D4AF37] border-4 border-[#D4AF37]/30 flex items-center justify-center text-[#0C061A] hover:bg-[#E4C247] disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
@@ -716,7 +900,78 @@ function VisitorUploadContent() {
           </button>
         </section>
 
-        {/* Captured photos preview */}
+        {/* Collage slot photos preview (in-progress — not yet composited) */}
+        {collageActive && collageSlotPhotos.length > 0 && (
+          <section aria-label="Foto slot collage (sedang dikumpulkan)" className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#D4AF37]" />
+                Slot Collage ({collageSlotPhotos.length}/{collageConfig!.slotCount})
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCollageSlotPhotos([])}
+                className="text-xs text-slate-400 hover:text-red-300 transition-colors inline-flex items-center gap-1"
+                aria-label="Hapus semua slot"
+              >
+                <Trash2 className="w-3 h-3" />
+                Reset Slot
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {Array.from({ length: collageConfig!.slotCount }).map((_, i) => {
+                const photo = collageSlotPhotos[i];
+                return (
+                  <div
+                    key={`slot-${i}`}
+                    className={`relative aspect-square rounded-lg overflow-hidden border-2 ${
+                      photo
+                        ? "border-[#D4AF37]/40 bg-[#120A21]"
+                        : "border-dashed border-slate-700 bg-[#0C061A] flex items-center justify-center"
+                    }`}
+                  >
+                    {photo ? (
+                      <>
+                        <img
+                          src={photo}
+                          alt={`Slot ${i + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeSlotPhoto(i)}
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white opacity-90 hover:bg-red-500/80 transition-colors"
+                          aria-label={`Hapus slot ${i + 1}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-gradient-to-t from-black/80 to-transparent">
+                          <span className="text-[10px] text-[#D4AF37] font-bold">
+                            Slot {i + 1} ✓
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-600 text-center px-1">
+                        Slot {i + 1}
+                        <br />
+                        Kosong
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {collageSlotPhotos.length < collageConfig!.slotCount && (
+              <p className="text-[10px] text-amber-300/80 mt-2 text-center">
+                Ambil {collageConfig!.slotCount - collageSlotPhotos.length} foto lagi
+                untuk melengkapi collage
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* Captured photos preview (completed composites ready to upload) */}
         {capturedPhotos.length > 0 && (
           <section aria-label="Foto yang akan diupload" className="mb-6">
             <div className="flex items-center justify-between mb-3">
