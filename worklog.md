@@ -1593,3 +1593,86 @@ Stage Summary:
   - ✅ Camera preview uses slot aspect ratio (visitor captures at correct ratio)
   - ✅ Counter unified (single clear "Slot X/N • Y/maxPhotos collage")
   - ✅ Compositing still works (visitor sees framed result in gallery)
+
+---
+Task ID: 40
+Agent: main (Z.ai Code) + subagent (drive-sync lib + route)
+Task: Add Google Drive Sync settings + refresh token + visitor photo sync to Drive.
+
+User wants: visitor photos uploaded to LIHUM auto-sync to Google Drive folder
+sumber galeri 24/7, without admin keeping a tab open.
+
+Solution: Save admin's Google OAuth refresh token to D1. Worker exchanges it
+for short-lived access tokens and uploads visitor photos to Drive.
+
+Backend:
+  - queries.ts: getDriveSyncTokenConfig, getDriveSyncRefreshToken,
+    setDriveSyncToken, clearDriveSyncToken
+    (2 Setting rows: drive_sync_refresh_token, drive_sync_user_email)
+  - /api/settings/drive-sync-token: GET (status), PUT (save), DELETE (clear)
+  - /api/settings/drive-sync: GET (sync status + pending count), POST (trigger)
+  - src/lib/drive-sync.ts (extended by subagent):
+    * exchangeRefreshTokenForAccessToken (via Firebase securetoken API)
+    * uploadPhotoToDrive (multipart upload)
+    * syncVisitorPhotosToDrive (main pipeline, limit 5 per request)
+    * getDriveSyncStatus
+
+Firebase config (firebase.ts):
+  - Scope: drive.readonly → drive (full read+write)
+  - Added prompt: 'consent' (required for refresh_token)
+  - adminSignInWithGoogle extracts refresh token, returns it
+
+Login flow (page.tsx):
+  - After admin login, refresh token saved via PUT /api/settings/drive-sync-token
+  - Fire-and-forget (non-blocking)
+
+AdminPanel UI (Settings tab):
+  - "Sinkronisasi Google Drive" card:
+    * Connection status badge (TERHUBUNG / Belum Terhubung)
+    * Connected email display
+    * Pending photos count + sync button
+    * Disconnect button
+    * Collapsible setup guide (6 steps, with links to Google Cloud Console)
+
+Drive sync flow:
+  1. Admin login → refresh token saved to D1
+  2. Visitor uploads photo → stored in D1 (visitorData)
+  3. Worker sync (manual trigger or future cron):
+     a. Exchange refresh token → access token
+     b. Upload photo to Drive folder sumber galeri
+     c. Store Drive file ID + thumbnailLink + webContentLink
+     d. Clear visitorData (free D1 storage)
+  4. Photo displays via Drive thumbnail URL (no D1 hit)
+
+Setup guide (in AdminPanel, collapsible):
+  Step 1: Google Cloud Console → Auth Platform
+  Step 2: Select 'Default Gemini Project' (Firebase LIHUM project)
+  Step 3: Branding → App name: LIHUM, email, home page
+  Step 4: Data Access → add scope: drive
+  Step 5: Audience → PUBLISH APP
+  Step 6: Login as admin in LIHUM → connection auto-saved
+
+Verified:
+  - GET /api/settings/drive-sync → {pending: 2, refreshConnected: false} ✓
+  - GET /api/settings/drive-sync-token → {connected: false} ✓
+  - Without admin → 403 ✓
+  - Home renders ✓
+  - 2 pending visitor photos waiting for sync ✓
+
+Deployed:
+  - wrangler: version e6044069
+  - GitHub push: commit 8359c69
+  - CI/CD: will auto-deploy
+
+Next steps for admin (to activate):
+  1. Setup Google Cloud Console OAuth consent screen (guide in Settings tab)
+  2. Login as admin in LIHUM → refresh token auto-saved
+  3. Click "Sync Sekarang" to trigger manual sync, OR wait for future cron
+
+Stage Summary:
+  - ✅ Drive Sync settings card added to Settings tab
+  - ✅ Refresh token storage + exchange implemented
+  - ✅ Visitor photo sync to Drive (upload + clear visitorData)
+  - ✅ Setup guide included (collapsible, 6 steps)
+  - ✅ Deployed + APIs verified
+  - ⏳ Admin needs to setup OAuth consent screen + login to activate
