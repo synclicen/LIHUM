@@ -1071,6 +1071,65 @@ export async function setMaintenanceConfig(
   ]);
 }
 
+// ---------- Visitor Upload Frame Overlay ----------
+//
+// Admin-configured frame (PNG with transparency) that gets composited onto
+// every visitor-uploaded photo before it's stored. This makes LIHUM's
+// upload mandiri produce the same framed output as the ARAY Android app.
+//
+// Stored as two Setting rows:
+//   visitor_frame_enabled (0/1) — whether to apply frame
+//   visitor_frame_image (base64 PNG data URL) — the frame overlay
+//
+// The frame is fetched by the visitor's browser via GET /api/settings/visitor-frame
+// and composited client-side via canvas before uploading the photo.
+
+const FRAME_ENABLED_KEY = "visitor_frame_enabled";
+const FRAME_IMAGE_KEY = "visitor_frame_image";
+
+export interface VisitorFrameConfig {
+  enabled: boolean;
+  frameImage: string; // base64 data URL (e.g. "data:image/png;base64,...")
+}
+
+export async function getVisitorFrameConfig(): Promise<VisitorFrameConfig> {
+  const enabledRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [FRAME_ENABLED_KEY],
+  });
+  const imageRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [FRAME_IMAGE_KEY],
+  });
+  const enabled =
+    enabledRes.rows.length > 0 &&
+    String((enabledRes.rows[0] as Record<string, unknown>).value) === "1";
+  const frameImage =
+    imageRes.rows.length > 0
+      ? String((imageRes.rows[0] as Record<string, unknown>).value)
+      : "";
+  return { enabled, frameImage };
+}
+
+export async function setVisitorFrameConfig(
+  enabled: boolean,
+  frameImage: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.batch([
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [FRAME_ENABLED_KEY, enabled ? "1" : "0", now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [FRAME_IMAGE_KEY, frameImage || "", now],
+    },
+  ]);
+}
+
 // ---------- Camera Global Config (stored as a single JSON Setting) ----------
 export interface CameraConfig {
   filter: string;

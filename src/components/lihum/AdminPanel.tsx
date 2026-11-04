@@ -152,6 +152,16 @@ export default function AdminPanel({
   const [maintenanceSaving, setMaintenanceSaving] = useState(false);
   const [maintenanceLoaded, setMaintenanceLoaded] = useState(false);
 
+  // ── Visitor Frame Overlay state ──
+  // Admin uploads a PNG frame; visitor-uploaded photos get the frame
+  // composited on top (client-side canvas) before upload. Makes LIHUM
+  // upload mandiri output match ARAY app's framed photos.
+  const [frameEnabled, setFrameEnabled] = useState(false);
+  const [frameImage, setFrameImage] = useState(""); // base64 data URL
+  const [frameLoading, setFrameLoading] = useState(false);
+  const [frameSaving, setFrameSaving] = useState(false);
+  const [frameLoaded, setFrameLoaded] = useState(false);
+
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
 
@@ -474,7 +484,7 @@ export default function AdminPanel({
     setCameraPreviewActive(false);
   }, []);
 
-  const handleCaptureTestPhoto = useCallback(() => {
+  const handleCaptureTestPhoto = useCallback(async () => {
     if (!previewVideoRef.current) return;
     const video = previewVideoRef.current;
     if (!video || video.videoWidth === 0) return;
@@ -521,8 +531,55 @@ export default function AdminPanel({
     ctx.filter = "none";
 
     const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+    // Apply frame overlay if enabled — composites the frame PNG on top of
+    // the captured photo via a second canvas. This matches what the visitor
+    // /upload page does, so admin test photos look exactly like visitor output.
+    if (frameEnabled && frameImage) {
+      try {
+        const frameImg = new Image();
+        frameImg.crossOrigin = "anonymous";
+        await new Promise<void>((resolve, reject) => {
+          frameImg.onload = () => resolve();
+          frameImg.onerror = () => reject(new Error("frame load failed"));
+          frameImg.src = frameImage;
+        });
+        const frameCanvas = document.createElement("canvas");
+        frameCanvas.width = canvas.width;
+        frameCanvas.height = canvas.height;
+        const fctx = frameCanvas.getContext("2d");
+        if (fctx) {
+          // Draw the captured photo as base
+          const photoImg = new Image();
+          photoImg.src = dataUrl;
+          await new Promise<void>((resolve) => { photoImg.onload = () => resolve(); });
+          fctx.drawImage(photoImg, 0, 0, frameCanvas.width, frameCanvas.height);
+          // Draw frame on top (cover-fit, same as visitor page)
+          const photoAspect = frameCanvas.width / frameCanvas.height;
+          const frameAspect = frameImg.width / frameImg.height;
+          let dw: number, dh: number, dx: number, dy: number;
+          if (frameAspect > photoAspect) {
+            dh = frameCanvas.height;
+            dw = dh * frameAspect;
+            dx = (frameCanvas.width - dw) / 2;
+            dy = 0;
+          } else {
+            dw = frameCanvas.width;
+            dh = dw / frameAspect;
+            dx = 0;
+            dy = (frameCanvas.height - dh) / 2;
+          }
+          fctx.drawImage(frameImg, dx, dy, dw, dh);
+          setCapturedTestPhoto(frameCanvas.toDataURL("image/jpeg", 0.92));
+          return;
+        }
+      } catch (err) {
+        console.warn("[Frame] Failed to apply frame, using unframed photo:", err);
+      }
+    }
+
     setCapturedTestPhoto(dataUrl);
-  }, [cameraAspectRatio, cameraFilter, cameraMirror]);
+  }, [cameraAspectRatio, cameraFilter, cameraMirror, frameEnabled, frameImage]);
 
   const handleSaveTestPhoto = async () => {
     if (!capturedTestPhoto || !captureTargetGallery) {
@@ -764,6 +821,85 @@ export default function AdminPanel({
       loadMaintenanceConfig();
     }
   }, [activeTab, maintenanceLoaded, loadMaintenanceConfig]);
+
+  // ── Visitor Frame Overlay load + save ──
+  const loadFrameConfig = useCallback(async () => {
+    setFrameLoading(true);
+    try {
+      const res = await fetch("/api/settings/visitor-frame");
+      if (!res.ok) return;
+      const data = await res.json();
+      setFrameEnabled(!!data.enabled);
+      setFrameImage(data.frameImage || "");
+      setFrameLoaded(true);
+    } catch (err) {
+      console.error("[Frame] Load failed:", err);
+    } finally {
+      setFrameLoading(false);
+    }
+  }, []);
+
+  const saveFrameConfig = useCallback(async () => {
+    setFrameSaving(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/settings/visitor-frame", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({
+          enabled: frameEnabled,
+          frameImage: frameImage,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || "Gagal menyimpan frame.");
+        return;
+      }
+      setSuccessMsg(
+        frameEnabled
+          ? "Frame AKTIF — foto upload pengunjung akan otomatis dapat frame."
+          : "Frame DIMATIKAN — foto upload pengunjung tanpa frame."
+      );
+      setTimeout(() => setSuccessMsg(""), 5000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal menyimpan frame.");
+    } finally {
+      setFrameSaving(false);
+    }
+  }, [frameEnabled, frameImage, userEmail]);
+
+  // Load frame config when Upload Mandiri tab is opened (lazy, once).
+  useEffect(() => {
+    if (activeTab === "upload" && !frameLoaded) {
+      loadFrameConfig();
+    }
+  }, [activeTab, frameLoaded, loadFrameConfig]);
+
+  // Handle frame file upload (PNG) — read as base64 data URL
+  const handleFrameFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/png")) {
+      setErrorMsg("Frame harus berupa file PNG (dengan transparansi).");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMsg("Frame terlalu besar (maks 2MB). Kompres PNG atau kurangi resolusi.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setFrameImage(reader.result as string);
+      setErrorMsg("");
+    };
+    reader.onerror = () => setErrorMsg("Gagal membaca file frame.");
+    reader.readAsDataURL(file);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2286,6 +2422,135 @@ export default function AdminPanel({
                     {savingCameraConfig ? "Menyimpan..." : "Simpan Pengaturan Kamera"}
                   </button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Visitor Frame Overlay Config ──
+              Admin uploads a PNG frame (with transparency). When enabled,
+              all visitor-uploaded photos get the frame composited on top
+              (client-side canvas) before upload. Matches ARAY app output. */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/20 rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center space-x-2.5 mb-4 pb-3 border-b border-violet-900/30">
+              <Sparkles className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-sm font-serif font-bold text-white">
+                Frame Overlay (Upload Mandiri)
+              </h3>
+            </div>
+
+            {frameLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <RefreshCw className="w-4 h-4 text-[#D4AF37] animate-spin" />
+                <span className="ml-2 text-xs text-slate-400">Memuat...</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Upload frame PNG (dengan transparansi) untuk diterapkan otomatis
+                  pada setiap foto yang diupload pengunjung via Upload Mandiri.
+                  Foto akan memiliki frame yang sama seperti aplikasi ARAY.
+                </p>
+
+                {/* Frame toggle */}
+                <div className="bg-[#1F0F3D]/50 border border-violet-950/50 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-white">Aktifkan Frame</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Foto upload pengunjung akan dapat frame otomatis
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={frameEnabled}
+                      onChange={(e) => setFrameEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-[#1F0F3D]/85 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-gray-100 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37] after:bg-white transition-colors" />
+                  </label>
+                </div>
+
+                {/* Frame upload + preview */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                    File Frame PNG
+                  </label>
+                  <div className="flex gap-3">
+                    {/* Preview */}
+                    <div className="w-20 h-20 rounded-xl bg-[#0C061A] border border-violet-950 overflow-hidden flex items-center justify-center shrink-0 relative">
+                      {frameImage ? (
+                        <img
+                          src={frameImage}
+                          alt="Frame preview"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <span className="text-[8px] text-slate-600 text-center px-1">
+                          Belum ada frame
+                        </span>
+                      )}
+                    </div>
+                    {/* Upload button */}
+                    <div className="flex-1 flex flex-col gap-2">
+                      <label className="cursor-pointer">
+                        <div className="px-3 py-2 rounded-xl bg-[#1F0F3D]/80 border border-violet-950 text-[11px] font-bold text-slate-300 hover:border-[#D4AF37]/40 hover:text-white transition-all flex items-center justify-center gap-1.5">
+                          <CloudUpload className="w-3.5 h-3.5" />
+                          Pilih File PNG
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/png"
+                          onChange={handleFrameFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                      {frameImage && (
+                        <button
+                          type="button"
+                          onClick={() => setFrameImage("")}
+                          className="px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/25 text-[10px] font-bold text-red-300 hover:bg-red-500/20 transition-all"
+                        >
+                          Hapus Frame
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-slate-500">
+                    PNG dengan transparansi, maks 2MB. Frame di-scale untuk
+                    menutupi seluruh foto (cover-fit).
+                  </p>
+                </div>
+
+                {/* Live composite preview (if frame + captured test photo exist) */}
+                {frameEnabled && frameImage && capturedTestPhoto && (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                      Preview Foto + Frame
+                    </label>
+                    <div className="w-full max-w-[200px] rounded-xl overflow-hidden border border-[#D4AF37]/20">
+                      <img
+                        src={capturedTestPhoto}
+                        alt="Test photo with frame"
+                        className="w-full h-auto"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Save frame config button */}
+                <button
+                  type="button"
+                  onClick={saveFrameConfig}
+                  disabled={frameSaving}
+                  className="w-full py-2.5 rounded-xl bg-[#D4AF37] text-[#4C2A85] text-[11px] font-extrabold uppercase tracking-wider hover:bg-[#dfbb66] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {frameSaving ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-3.5 h-3.5" />
+                  )}
+                  {frameSaving ? "Menyimpan..." : "Simpan Frame"}
+                </button>
               </div>
             )}
           </div>
