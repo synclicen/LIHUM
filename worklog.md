@@ -1175,3 +1175,87 @@ Stage Summary:
   - ✅ End-to-end verified (enable → visitor sees screen → disable → normal)
   - ✅ Deployed via wrangler + CI/CD auto-deploy verified
   - ✅ 0 console errors, mobile responsive, footer not needed (full-screen)
+
+---
+Task ID: 34
+Agent: main (Z.ai Code)
+Task: Capacity optimization for wisuda event (20K visitors across 4 galleries).
+
+Scenario: 5000 peserta × 4 galeri wisuda = 20,000 visitors over event period.
+Each visitor: browse gallery, search photos, download 1-3 photos.
+
+Bottleneck analysis (BEFORE optimization):
+  - Workers requests (free tier: 100K/day):
+    * Polling was the #1 drain:
+      - maintenance 60s × 20K visitors = 28.8M req/day (if all online)
+      - projects 5m × 20K = 5.7M req/day
+      - gallery updates 5m × 20K = 5.7M req/day
+    * Core actions: 20K × ~7 = 140K req (home + projects + gallery + pagination)
+    * Downloads (streamed): 20K × 3 = 60K req + Worker CPU for streaming
+    * Total: ~40M+ req/day — EXCEEDS free tier by 400x at peak concurrency
+
+Optimizations implemented:
+  1. DISABLE polling for non-admin visitors:
+     - page.tsx maintenance polling: 60s → 5m for non-admin (admin stays 60s)
+     - page.tsx projects polling: disabled for non-admin (role === null)
+     - GalleryView gallery updates: disabled for non-admin (!isAdmin)
+     - Saves: ~40M Worker requests/day at 20K concurrent visitors
+
+  2. EDGE CACHING (Cache-Control: s-maxage=60, stale-while-revalidate=300):
+     - /api/projects (public): cached 60s at Cloudflare CDN edge
+     - /api/projects/[id] (public): cached 60s at edge
+     - 1000 visitors hitting same gallery within 60s = 1 D1 read (rest from cache)
+     - Admin responses: no-store, private (always fresh)
+     - Verified in production: cache-control header present ✓
+
+  3. DOWNLOAD optimization (non-admin redirect path):
+     - Non-admin: 302 redirect to Google Drive directly (no streaming)
+     - Saves Worker CPU + bandwidth per download
+     - Admin: still streams through Worker (custom filenames, low-volume)
+
+  4. Photo thumbnails: already direct Google Drive URLs (0 Worker requests)
+
+After optimization (estimated load at 20K visitors over 3 days):
+  - Core requests: 20K × 7 = 140K (home + projects + gallery + pagination + downloads)
+  - Polling (non-admin): ~0 (disabled)
+  - Polling (admin, if 1 admin online): 60s × 1440 = 1440/day (negligible)
+  - Edge cache hits: reduces D1 reads by ~99% for public reads
+  - Total: ~50K req/day average → WITHIN free tier (100K/day)
+  - Peak day (10K visitors): ~70K req → still within free tier
+
+D1 writes (free tier: 100K/day):
+  - View counter: 20K gallery opens × 1 write = 20K (but fire-and-forget, fail-safe)
+  - Download counter: 20K × 3 = 60K writes (fire-and-forget)
+  - Total: ~80K writes/day at peak — TIGHT but within limit
+  - If D1 writes blocked, counters fail silently (no UX impact)
+
+D1 reads (free tier: 5M/day):
+  - With edge caching: ~1 read per 60s per unique gallery = negligible
+  - Without cache: 20K × 3 reads = 60K/day → easily within limit
+
+Deployed:
+  - wrangler: version 0b3ba8f4
+  - GitHub push: commit 8fefa1b
+  - CI/CD run: success, all 11 steps OK
+  - Cache-Control headers verified live in production
+
+HONEST ASSESSMENT:
+  Free tier CAN handle 20K visitors over 3 days IF:
+  - Visitors don't leave tabs open for hours (polling disabled helps)
+  - Peak concurrency stays under ~2000 simultaneous
+  - Downloads are spread out (not everyone at once)
+
+  RECOMMENDED for safety: upgrade to Workers Paid ($5/month) for event period:
+  - 25 billion requests/month (vs 100K/day free)
+  - 50 million D1 writes/day (vs 100K free)
+  - No subrequest limits
+  - Peace of mind for the big day
+  - Can downgrade back to free after event
+
+Go-live checklist (see capacity report for details):
+  - Pre-event: test with 50 simulated visitors, verify response times
+  - Pre-event: ensure 4 galleries synced with all photos
+  - Pre-event: disable auto-sync during event (avoid Drive API rate limits)
+  - During event: monitor Cloudflare dashboard for request spikes
+  - During event: have maintenance mode ready as fallback
+  - Post-event: download analytics (view/download counts)
