@@ -1323,3 +1323,82 @@ Stage Summary:
   - ✅ Load tested: 100 concurrent = all 200, <2.5s
   - ✅ Deployed + pushed to CI/CD
   - ⚠️ Still recommend Workers Paid ($5/mo) for 100% peace of mind on event day
+
+---
+Task ID: 36
+Agent: main (Z.ai Code) + subagent (full-stack-developer for /upload page)
+Task: Add ARAY-style frame overlay to visitor uploads.
+
+User wants: photos uploaded by visitors via LIHUM's Upload Mandiri to automatically
+get the same frame overlay as the ARAY Android app produces.
+
+Architecture:
+  Admin uploads frame PNG → D1 Setting → visitor browser fetches → canvas
+  composites frame onto photo before upload → framed JPEG stored
+
+Backend:
+  - queries.ts: getVisitorFrameConfig + setVisitorFrameConfig
+    (2 Setting rows: visitor_frame_enabled, visitor_frame_image)
+  - /api/settings/visitor-frame:
+    * GET (public) → {enabled, frameImage} — fetched by /upload page
+    * PUT (admin only) → updates config, validates PNG + max 2MB
+
+Client library (src/lib/frame-compositing.ts):
+  - applyFrameToPhoto(photoUrl, frameUrl) — canvas compositing, cover-fit
+  - resizePhoto(dataUrl, maxDim=1600) — pre-resize to prevent huge uploads
+  - preparePhotoForUpload(photoUrl, frameUrl) — full pipeline: resize + frame
+  - readFileAsDataURL(file) — for file upload path
+
+Admin UI (AdminPanel Upload Mandiri tab):
+  - Frame overlay config card (after camera config, before camera preview):
+    * Toggle enable/disable
+    * PNG file upload with live preview (80x80 thumbnail)
+    * "Hapus Frame" button to clear
+    * Live composite preview (frame on captured test photo)
+    * "Simpan Frame" save button
+  - Admin camera capture (handleCaptureTestPhoto) now applies frame if enabled:
+    * Made callback async
+    * Canvas composites frame on captured photo
+    * Fallback to unframed if frame load fails
+
+Visitor /upload page (src/app/upload/page.tsx):
+  - Fetches gallery info + frame config on mount
+  - Camera capture with LIVE frame overlay (CSS positioned on video):
+    * getUserMedia (facingMode: environment, 1920x1080)
+    * Frame PNG as absolute inset-0 object-cover pointer-events-none overlay
+    * Front/back camera switch
+    * Capture → canvas → preparePhotoForUpload (resize + frame)
+  - File upload path:
+    * File input (accept image/*, multiple)
+    * readFileAsDataURL → preparePhotoForUpload (resize + frame)
+  - Thumbnail grid (3-col, scrollable) shows framed results
+  - Upload via POST /api/projects/:id/visitor-upload (raw base64, image/jpeg)
+  - Success state with "Lihat Galeri" link
+  - Error handling: NotAllowedError, NotFoundError, NotReadableError, OverconstrainedError
+  - Rate limit aware (15 photos per 10 min, amber warning at 13+)
+  - Mobile-first (375px), dark gold theme, sticky upload bar
+  - Suspense wrapper (required by useSearchParams in Next 16)
+
+Verified:
+  - GET /api/settings/visitor-frame → {enabled:false, frameImage:''} ✓
+  - PUT without admin → 403 ✓
+  - PUT with admin (test PNG) → success, D1 updated ✓
+  - GET after enable → {enabled:true, frameImage:'data:image/png;base64,...'} ✓
+  - /upload?gallery=ID → HTTP 200, renders gallery name + camera + upload buttons ✓
+  - 0 console errors ✓
+  - Mobile 375px: h1 visible, 2 buttons visible ✓
+  - Home page still works (HTTP 200) ✓
+
+Deployed:
+  - wrangler: version 677aae36
+  - GitHub push: commit f11599a
+  - CI/CD: will auto-deploy
+
+Stage Summary:
+  - ✅ Backend: frame config API (GET public, PUT admin)
+  - ✅ Client library: frame-compositing.ts (canvas compositing, cover-fit)
+  - ✅ Admin UI: frame config card in Upload Mandiri tab
+  - ✅ Admin camera capture: applies frame if enabled (async callback)
+  - ✅ Visitor /upload page: camera + file upload with live frame overlay
+  - ✅ Deployed + verified (API + page render + mobile responsive)
+  - ℹ️ Admin needs to upload actual ARAY frame PNG via AdminPanel to activate
