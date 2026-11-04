@@ -892,7 +892,7 @@ export default function AdminPanel({
     }
   }, [activeTab, frameLoaded, loadFrameConfig]);
 
-  // Handle frame file upload (PNG) — read as base64 data URL
+  // Handle frame file upload (PNG) — auto-resize to stay under 800KB (D1 limit).
   const handleFrameFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -900,14 +900,44 @@ export default function AdminPanel({
       setErrorMsg("Frame harus berupa file PNG (dengan transparansi).");
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setErrorMsg("Frame terlalu besar (maks 2MB). Kompres PNG atau kurangi resolusi.");
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMsg("File terlalu besar (maks 5MB sebelum kompresi).");
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      setFrameImage(reader.result as string);
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
       setErrorMsg("");
+      // Auto-resize to stay under 800KB (D1 bound param limit ~1MB)
+      let resizedDataUrl = dataUrl;
+      try {
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise<void>((resolve) => { img.onload = () => resolve(); });
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        const MAX_DIM = 2000;
+        if (w > MAX_DIM || h > MAX_DIM) {
+          const scale = Math.min(MAX_DIM / w, MAX_DIM / h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) break;
+          ctx.drawImage(img, 0, 0, w, h);
+          resizedDataUrl = canvas.toDataURL("image/png");
+          if (resizedDataUrl.length <= 800 * 1024) break;
+          w = Math.round(w * 0.8);
+          h = Math.round(h * 0.8);
+        }
+      } catch (err) {
+        console.warn("[Frame] Auto-resize failed:", err);
+      }
+      setFrameImage(resizedDataUrl);
     };
     reader.onerror = () => setErrorMsg("Gagal membaca file frame.");
     reader.readAsDataURL(file);
@@ -986,6 +1016,7 @@ export default function AdminPanel({
   }, [activeTab, collageLoaded, loadCollageConfig]);
 
   // Handle collage template file upload (PNG with transparent holes)
+  // Auto-resizes to keep under 800KB (D1 bound parameter limit).
   const handleCollageFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -993,22 +1024,70 @@ export default function AdminPanel({
       setErrorMsg("Template harus berupa file PNG (dengan transparansi untuk slot).");
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setErrorMsg("Template terlalu besar (maks 2MB). Kompres PNG atau kurangi resolusi.");
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMsg("File terlalu besar (maks 5MB sebelum kompresi).");
       return;
     }
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
-      setCollageImage(dataUrl);
       setErrorMsg("");
+
+      // Auto-resize PNG to stay under 800KB (D1 bound param limit ~1MB)
+      // Scale down progressively until under limit. Preserve transparency.
+      let resizedDataUrl = dataUrl;
+      try {
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise<void>((resolve) => { img.onload = () => resolve(); });
+
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        const MAX_DIM = 2000; // cap dimensions to prevent huge PNGs
+        if (w > MAX_DIM || h > MAX_DIM) {
+          const scale = Math.min(MAX_DIM / w, MAX_DIM / h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+
+        // Progressive scaling: try each dimension, check size, reduce if needed
+        let attempt = 0;
+        while (attempt < 5) {
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) break;
+          ctx.drawImage(img, 0, 0, w, h);
+          resizedDataUrl = canvas.toDataURL("image/png");
+          if (resizedDataUrl.length <= 800 * 1024) break; // under 800KB, good
+          // Still too large — scale down 20%
+          w = Math.round(w * 0.8);
+          h = Math.round(h * 0.8);
+          attempt++;
+        }
+
+        if (resizedDataUrl.length > 800 * 1024) {
+          setErrorMsg(`Template masih terlalu besar setelah kompresi (${Math.round(resizedDataUrl.length / 1024)}KB). Gunakan PNG lebih sederhana.`);
+          return;
+        }
+      } catch (err) {
+        console.warn("[Collage] Auto-resize failed, using original:", err);
+        resizedDataUrl = dataUrl;
+      }
+
+      setCollageImage(resizedDataUrl);
+
       // Detect slot count immediately so admin sees feedback
       try {
         const { detectTemplateSlots } = await import("@/lib/collage-compositing");
-        const slots = await detectTemplateSlots(dataUrl);
+        const slots = await detectTemplateSlots(resizedDataUrl);
         setCollageSlotCount(slots.length);
         if (slots.length === 0) {
           setErrorMsg("Tidak ada slot transparan terdeteksi. Pastikan PNG memiliki area transparan (hole) untuk foto.");
+        } else {
+          setSuccessMsg(`Template terdeteksi: ${slots.length} slot. Klik "Simpan Collage" untuk menyimpan.`);
+          setTimeout(() => setSuccessMsg(""), 4000);
         }
       } catch {
         setCollageSlotCount(0);
@@ -2633,7 +2712,7 @@ export default function AdminPanel({
                     </div>
                   </div>
                   <p className="text-[9px] text-slate-500">
-                    PNG dengan transparansi, maks 2MB. Frame di-scale untuk
+                    PNG dengan transparansi, maks 800KB (auto-resize). Frame di-scale untuk
                     menutupi seluruh foto (cover-fit).
                   </p>
                 </div>
@@ -2835,7 +2914,7 @@ export default function AdminPanel({
                 )}
 
                 <p className="text-[9px] text-slate-500 leading-relaxed">
-                  PNG dengan transparansi, maks 2MB. Template di-render pada
+                  PNG dengan transparansi, maks 800KB (auto-resize). Template di-render pada
                   dimensi naturalnya (tidak di-stretch). Slot dengan rotasi
                   (miring) didukung — sistem menghitung sudut via image moments.
                 </p>

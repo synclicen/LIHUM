@@ -60,6 +60,7 @@ export interface PhotoRow {
   createdTime: string;
   modifiedTime: string;
   aiHidden: number; // 0 | 1
+  visitorData: string; // base64 data URL for visitor-uploaded photos (empty for Drive photos)
   projectId: string;
 }
 
@@ -116,6 +117,7 @@ export interface NewPhotoInput {
   size: string;
   createdTime: string;
   modifiedTime: string;
+  visitorData?: string; // base64 data URL for visitor-uploaded photos (optional)
 }
 
 export interface NewAccountInput {
@@ -160,6 +162,7 @@ const asPhoto = (r: Record<string, unknown>): PhotoRow => ({
   createdTime: String(r.createdTime ?? ""),
   modifiedTime: String(r.modifiedTime ?? ""),
   aiHidden: Number(r.aiHidden ?? 0),
+  visitorData: String(r.visitorData ?? ""),
   projectId: String(r.projectId ?? ""),
 });
 const asAccount = (r: Record<string, unknown>): AccountRow => ({
@@ -579,8 +582,10 @@ export async function replaceProjectPhotos(
   // Fetch existing photos for this project to compute a true delta.
   // We compare on all user-visible fields EXCEPT aiHidden (that's an
   // admin-set flag, preserved across syncs — never overwritten by sync).
+  // visitorData is also preserved — visitor-uploaded photos must NOT be
+  // deleted or overwritten when an admin syncs from Google Drive.
   const existing = await db.execute({
-    sql: "SELECT id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime FROM Photo WHERE projectId = ?",
+    sql: "SELECT id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, visitorData FROM Photo WHERE projectId = ?",
     args: [projectId],
   });
   const existingMap = new Map<
@@ -593,6 +598,7 @@ export async function replaceProjectPhotos(
       size: string;
       createdTime: string;
       modifiedTime: string;
+      visitorData: string;
     }
   >();
   for (const row of existing.rows) {
@@ -605,6 +611,7 @@ export async function replaceProjectPhotos(
       size: String(r.size ?? ""),
       createdTime: String(r.createdTime ?? ""),
       modifiedTime: String(r.modifiedTime ?? ""),
+      visitorData: String(r.visitorData ?? ""),
     });
   }
 
@@ -632,12 +639,27 @@ export async function replaceProjectPhotos(
     }
   }
 
-  const toDelete = [...existingMap.keys()].filter((id) => !newIds.has(id));
+  // Step 2: Delete only photos that are NOT in the new batch AND are NOT
+  // visitor-uploaded photos. Visitor photos (visitorData != "") are preserved
+  // across Drive syncs — they were uploaded by visitors, not from Drive.
+  const toDelete = [...existingMap.entries()]
+    .filter(([id, data]) => !newIds.has(id) && !data.visitorData)
+    .map(([id]) => id);
 
   // Step 1: Upsert only new + changed photos.
+  // Use ON CONFLICT DO UPDATE to preserve visitorData + aiHidden on existing rows.
   if (toUpsert.length > 0) {
-    const upsertSql = `INSERT OR REPLACE INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const upsertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(projectId, id) DO UPDATE SET
+                name = excluded.name,
+                mimeType = excluded.mimeType,
+                thumbnailLink = excluded.thumbnailLink,
+                webContentLink = excluded.webContentLink,
+                size = excluded.size,
+                createdTime = excluded.createdTime,
+                modifiedTime = excluded.modifiedTime`;
+    // visitorData + aiHidden are NOT in the SET clause → preserved on existing rows
     for (let i = 0; i < toUpsert.length; i += CHUNK_SIZE) {
       const chunk = toUpsert.slice(i, i + CHUNK_SIZE);
       const stmts = chunk.map((p) => ({
@@ -695,8 +717,8 @@ export async function addProjectPhotos(
   photos: NewPhotoInput[]
 ): Promise<void> {
   if (photos.length === 0) return;
-  const insertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, projectId)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const insertSql = `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, visitorData, projectId)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   const CHUNK_SIZE = 500;
 
   for (let i = 0; i < photos.length; i += CHUNK_SIZE) {
@@ -712,6 +734,7 @@ export async function addProjectPhotos(
         p.size,
         p.createdTime,
         p.modifiedTime,
+        p.visitorData || "",
         projectId,
       ],
     }));

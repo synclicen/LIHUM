@@ -73,7 +73,34 @@ export async function GET(req: NextRequest) {
   // Look up the photo to get webContentLink + projectId (for counter).
   const photo = await findPhotoById(fileId);
 
-  // ── Non-admin path: redirect directly to Google Drive ──
+  // ── Visitor photo path: serve from DB (base64 in visitorData) ──
+  // Visitor photos have no Google Drive link — they're stored in D1.
+  if (photo && photo.visitorData) {
+    if (photo.projectId) {
+      incrementProjectDownloads(photo.projectId).catch(() => {});
+    }
+    // Parse the data URL and return as binary
+    const match = photo.visitorData.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) {
+      const mimeType = match[1];
+      const base64Data = match[2];
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return new NextResponse(bytes, {
+        status: 200,
+        headers: {
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
+          "Content-Type": mimeType || "image/jpeg",
+          "Cache-Control": CACHE_7_DAYS,
+        },
+      });
+    }
+  }
+
+  // ── Non-admin path (Google Drive photos): redirect to Google Drive ──
   // This is the high-traffic path. 302 redirect = 1 Worker request, no
   // streaming, no CPU. Browser downloads directly from Google's servers.
   if (role === null) {

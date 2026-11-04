@@ -746,7 +746,9 @@ export default function GalleryView({
                 >
                   <AnimatePresence mode="popLayout">
                     {project.photos.slice(0, visibleCount).map((photo, index) => {
-                      const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w400`;
+                      const imageProxySrc = photo.id.startsWith("visitor_")
+                        ? `/api/visitor-photo?id=${photo.id}`
+                        : `https://drive.google.com/thumbnail?id=${photo.id}&sz=w400`;
                       return (
                         <motion.div
                           key={photo.id}
@@ -805,7 +807,9 @@ export default function GalleryView({
                   <AnimatePresence mode="popLayout">
                     {project.photos.slice(0, visibleCount).map((photo, index) => {
                       const cleanName = formatPhotoName(photo.name);
-                      const imageProxySrc = `https://drive.google.com/thumbnail?id=${photo.id}&sz=w600`;
+                      const imageProxySrc = photo.id.startsWith("visitor_")
+                        ? `/api/visitor-photo?id=${photo.id}`
+                        : `https://drive.google.com/thumbnail?id=${photo.id}&sz=w600`;
 
                       return (
                         <motion.div
@@ -1068,7 +1072,9 @@ export default function GalleryView({
                   className="lg:col-span-8 bg-slate-950 flex items-center justify-center relative group p-2"
                 >
                   <img
-                    src={`https://drive.google.com/thumbnail?id=${activePhoto.id}&sz=w1600`}
+                    src={activePhoto.id.startsWith("visitor_")
+                      ? `/api/visitor-photo?id=${activePhoto.id}`
+                      : `https://drive.google.com/thumbnail?id=${activePhoto.id}&sz=w1600`}
                     alt={activePhoto.name}
                     className="max-h-[75vh] object-contain max-w-full"
                   />

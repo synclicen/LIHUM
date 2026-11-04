@@ -148,6 +148,9 @@ export async function POST(
 
   // Convert incoming photos to NewPhotoInput format — insert directly into
   // the Photo table so they appear immediately in the galeri.
+  // CRITICAL: store the base64 data in visitorData column so the photo
+  // can be served via /api/visitor-photo?id=PHOTO_ID. Without this, the
+  // photo has no thumbnailLink (empty) and can't be displayed.
   const photoInputs: NewPhotoInput[] = photos.map((photo, i) => {
     const ext = photo.fileName.match(/\.([^.]+)$/)?.[1] || "jpg";
     const cleanName = `${galleryName} - visitor-${Date.now()}-${i + 1}.${ext}`;
@@ -160,15 +163,20 @@ export async function POST(
     // Use a unique ID based on timestamp + random to avoid collision
     const photoId = `visitor_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 10)}`;
 
+    // Reconstruct the full data URL from the base64 payload.
+    // This is stored in the DB and served via /api/visitor-photo endpoint.
+    const dataUrl = `data:${photo.mimeType};base64,${photo.base64Data}`;
+
     return {
       id: photoId,
       name: cleanName,
       mimeType: photo.mimeType,
-      thumbnailLink: "", // no thumbnail (visitor photos don't have Drive thumbnails)
-      webContentLink: "", // no Drive download link (stored in DB only)
+      thumbnailLink: "", // no Drive thumbnail — served via visitor-photo endpoint
+      webContentLink: "", // no Drive download — served via visitor-photo endpoint
       size: sizeFormatted,
       createdTime: now,
       modifiedTime: now,
+      visitorData: dataUrl,
     };
   });
 

@@ -5,9 +5,9 @@ import {
   setCollageConfig,
 } from "@/lib/queries";
 
-// Max template size: 2MB base64 (PNG with transparent holes is typically
-// 100-500KB even at high resolution).
-const MAX_TEMPLATE_SIZE = 2 * 1024 * 1024;
+// Max template size: 800KB base64. D1 has a ~1MB bound parameter limit,
+// so we stay safely under it. Admin UI auto-resizes PNGs before upload.
+const MAX_TEMPLATE_SIZE = 800 * 1024;
 
 /**
  * GET /api/settings/collage-template — Public endpoint.

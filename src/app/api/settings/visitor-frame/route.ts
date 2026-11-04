@@ -7,7 +7,7 @@ import {
 
 // Max frame image size: 2MB base64 (a PNG frame is typically 100-500KB).
 // This is small enough to store in D1 Setting + fast to download on mobile.
-const MAX_FRAME_SIZE = 2 * 1024 * 1024;
+const MAX_FRAME_SIZE = 800 * 1024;
 
 /**
  * GET /api/settings/visitor-frame — Public endpoint.

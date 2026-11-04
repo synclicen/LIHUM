@@ -24,9 +24,12 @@ import {
 import { compositeCollage, detectTemplateSlots, resizePhoto } from "@/lib/collage-compositing";
 
 // ── Constants ──
-// Server enforces max 15 photos per 10 min per IP. We also cap the session.
+// Server enforces max 15 photos per 10 min per IP. The actual per-session
+// limit is fetched from /api/config (camera config maxPhotos) and defaults
+// to 5 if the fetch fails.
 const PHOTO_QUALITY = 0.92;
-const MAX_PHOTOS_PER_SESSION = 15;
+const DEFAULT_MAX_PHOTOS = 5;
+const SERVER_RATE_LIMIT = 15;
 
 type FacingMode = "environment" | "user";
 
@@ -85,6 +88,10 @@ function VisitorUploadContent() {
   // Raw photos for collage slots (NOT individually framed — they'll be composited)
   const [collageSlotPhotos, setCollageSlotPhotos] = useState<string[]>([]);
 
+  // Max photos per session — fetched from /api/config (admin camera config).
+  // Falls back to DEFAULT_MAX_PHOTOS if fetch fails.
+  const [maxPhotos, setMaxPhotos] = useState(DEFAULT_MAX_PHOTOS);
+
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -104,7 +111,7 @@ function VisitorUploadContent() {
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Fetch gallery info ──
+  // ── Fetch gallery info + maxPhotos config ──
   useEffect(() => {
     if (!galleryId) {
       setLoadState("error");
@@ -115,18 +122,25 @@ function VisitorUploadContent() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `/api/projects/${encodeURIComponent(galleryId)}/visitor-upload`
-        );
-        const data = await res.json();
+        // Fetch gallery info + camera config in parallel
+        const [galleryRes, configRes] = await Promise.all([
+          fetch(`/api/projects/${encodeURIComponent(galleryId)}/visitor-upload`),
+          fetch(`/api/config`),
+        ]);
+        const galleryData = await galleryRes.json();
+        const configData = await configRes.json().catch(() => ({}));
         if (cancelled) return;
-        if (!res.ok) {
+        if (!galleryRes.ok) {
           setLoadState("error");
-          setLoadError(data.error || "Galeri tidak ditemukan.");
+          setLoadError(galleryData.error || "Galeri tidak ditemukan.");
           return;
         }
-        setGallery(data);
-        if (!data.allowVisitorUpload) {
+        setGallery(galleryData);
+        // Update maxPhotos from admin camera config
+        if (configData.maxPhotos && typeof configData.maxPhotos === "number") {
+          setMaxPhotos(Math.min(configData.maxPhotos, SERVER_RATE_LIMIT));
+        }
+        if (!galleryData.allowVisitorUpload) {
           setLoadState("forbidden");
         } else {
           setLoadState("ready");
@@ -391,9 +405,9 @@ function VisitorUploadContent() {
     }
 
     // ── Single-frame mode (existing behavior) ──
-    if (capturedPhotos.length >= MAX_PHOTOS_PER_SESSION) {
+    if (capturedPhotos.length >= maxPhotos) {
       setCameraError(
-        `Anda telah mencapai batas ${MAX_PHOTOS_PER_SESSION} foto per sesi. Upload dulu sebelum menambah lagi.`
+        `Anda telah mencapai batas ${maxPhotos} foto per sesi. Upload dulu sebelum menambah lagi.`
       );
       return;
     }
@@ -490,12 +504,12 @@ function VisitorUploadContent() {
 
       // ── Single-frame mode (existing behavior) ──
       try {
-        const remaining = MAX_PHOTOS_PER_SESSION - capturedPhotos.length;
+        const remaining = maxPhotos - capturedPhotos.length;
         const toProcess = Array.from(files).slice(0, remaining);
 
         if (Array.from(files).length > remaining) {
           setCameraError(
-            `Maksimal ${MAX_PHOTOS_PER_SESSION} foto per sesi. Hanya ${remaining} foto pertama yang diproses.`
+            `Maksimal ${maxPhotos} foto per sesi. Hanya ${remaining} foto pertama yang diproses.`
           );
         }
 
@@ -734,7 +748,7 @@ function VisitorUploadContent() {
               </span>
             ) : capturedPhotos.length > 0 ? (
               <span className="text-xs text-slate-400">
-                {capturedPhotos.length}/{MAX_PHOTOS_PER_SESSION} foto
+                {capturedPhotos.length}/{maxPhotos} foto
               </span>
             ) : null}
           </div>
@@ -855,7 +869,7 @@ function VisitorUploadContent() {
                     processing ||
                     (collageActive
                       ? collageSlotPhotos.length >= collageConfig!.slotCount
-                      : capturedPhotos.length >= MAX_PHOTOS_PER_SESSION)
+                      : capturedPhotos.length >= maxPhotos)
                   }
                   aria-label="Ambil foto"
                   title="Ambil foto"
@@ -892,7 +906,7 @@ function VisitorUploadContent() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={processing || capturedPhotos.length >= MAX_PHOTOS_PER_SESSION}
+            disabled={processing || capturedPhotos.length >= maxPhotos}
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[#120A21] border border-[#D4AF37]/25 text-slate-200 font-medium text-sm hover:bg-[#1A0F2E] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <ImageIcon className="w-4 h-4 text-[#D4AF37]" />
@@ -1023,12 +1037,12 @@ function VisitorUploadContent() {
         )}
 
         {/* Rate limit warning */}
-        {capturedPhotos.length >= MAX_PHOTOS_PER_SESSION - 2 &&
-          capturedPhotos.length < MAX_PHOTOS_PER_SESSION && (
+        {capturedPhotos.length >= maxPhotos - 2 &&
+          capturedPhotos.length < maxPhotos && (
             <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>
-                Mendekati batas {MAX_PHOTOS_PER_SESSION} foto per sesi. Upload
+                Mendekati batas {maxPhotos} foto per sesi. Upload
                 dulu sebelum menambah foto baru.
               </span>
             </div>

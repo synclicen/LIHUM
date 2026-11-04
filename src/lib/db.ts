@@ -147,9 +147,11 @@ export async function ensureSchema(): Promise<void> {
       existingTables.has("DriveWatchChannel");
 
     if (allTablesExist) {
-      // Tables exist — run needsSync column migration (1 PRAGMA read + maybe 1 ALTER write).
-      // This is the only migration we still run because needsSync was added after initial deploy.
+      // Tables exist — run column migrations for columns added after initial deploy.
+      // needsSync: added in Task 28 (Drive Push Notifications)
+      // visitorData: added for visitor upload photos (base64 stored in DB)
       await ensureColumn("Project", "needsSync", "INTEGER NOT NULL DEFAULT 0");
+      await ensureColumn("Photo", "visitorData", "TEXT NOT NULL DEFAULT ''");
       return;
     }
 
@@ -176,6 +178,7 @@ export async function ensureSchema(): Promise<void> {
   thumbnailLink TEXT NOT NULL DEFAULT '', webContentLink TEXT NOT NULL DEFAULT '',
   size TEXT NOT NULL DEFAULT '', createdTime TEXT NOT NULL DEFAULT '',
   modifiedTime TEXT NOT NULL DEFAULT '', aiHidden INTEGER NOT NULL DEFAULT 0,
+  visitorData TEXT NOT NULL DEFAULT '',
   projectId TEXT NOT NULL, PRIMARY KEY (projectId, id)
 )` },
         { sql: `CREATE INDEX IF NOT EXISTS idx_photo_projectId ON Photo(projectId)` },
