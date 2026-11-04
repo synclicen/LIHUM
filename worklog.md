@@ -1548,3 +1548,48 @@ Stage Summary:
   - ✅ Bug 3 fixed: collage template auto-resized + saved to D1
   - ✅ Bug 4 fixed: collage compositing works (template now saved)
   - ✅ Deployed + verified
+
+---
+Task ID: 39
+Agent: main (Z.ai Code)
+Task: Fix collage upload UX — remove frame overlay, use slot aspect ratio, fix counter.
+
+User feedback:
+  1. Frame template is 16:9, slot PNG is 9:16, but camera preview was hardcoded 4:3
+     → frame overlay stretched/rotated, visual chaos
+  2. Counter showed "sisa 3 foto" (from camera config) while visitor needs 4 photos
+     for 2-slot collage (2 photos × 2 collages) — confusing dual counters
+  3. User solution: remove frame overlay from upload page entirely, visitor takes
+     photos at slot aspect ratio, sees composed result in gallery
+
+Fixes implemented:
+  1. collage-compositing.ts: added detectSlotAspectRatio()
+     - Returns w/h of the first detected slot (clamped 0.5-2.0)
+     - Used to size camera preview to match slot aspect ratio
+
+  2. /upload page:
+     - Removed overlayImage (frame/template overlay) from camera preview entirely
+     - Camera preview now uses dynamic aspectRatio CSS via style attr
+       (was hardcoded className aspect-[4/3])
+     - Collage fetch effect now also detects slot aspect ratio
+     - Header counter: in collage mode shows "Slot X/N • Y/maxPhotos collage"
+       (single clear counter, not confusing dual counters)
+     - Rate limit warning hidden in collage mode (slot progress handles guidance)
+
+Verified in production:
+  - Camera preview aspect ratio: 1.30/1 (matches detected slot, not 4:3) ✓
+  - NO overlay image in camera preview (frame/template removed) ✓
+  - Header counter: "Ambil Foto (Collage 2 Slot) Slot 0/2" — clear ✓
+  - Collage template saved in D1: 818,266 chars (~800KB) ✓
+  - 0 console errors ✓
+  - /upload page renders HTTP 200 ✓
+
+Deployed:
+  - wrangler: version 8aec3383
+  - GitHub push: commit c111bec
+
+Stage Summary:
+  - ✅ Frame overlay removed from /upload page (no visual chaos)
+  - ✅ Camera preview uses slot aspect ratio (visitor captures at correct ratio)
+  - ✅ Counter unified (single clear "Slot X/N • Y/maxPhotos collage")
+  - ✅ Compositing still works (visitor sees framed result in gallery)
