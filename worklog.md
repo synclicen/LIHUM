@@ -1402,3 +1402,73 @@ Stage Summary:
   - ✅ Visitor /upload page: camera + file upload with live frame overlay
   - ✅ Deployed + verified (API + page render + mobile responsive)
   - ℹ️ Admin needs to upload actual ARAY frame PNG via AdminPanel to activate
+
+---
+Task ID: 37
+Agent: main (Z.ai Code)
+Task: Implement Collage Mode (multi-slot frame) — ported from ARAY v4.7.67.
+
+User wants: visitor uploads with 2-slot frame (like ARAY app), where photos can
+be fit/full on slots positioned horizontal, vertical, or tilted at any angle.
+
+Implementation (ported from ARAY github.com/synclicen/ARAY):
+
+Backend:
+  - queries.ts: getCollageConfig + setCollageConfig
+    (3 Setting rows: collage_enabled, collage_image, collage_fit_mode)
+  - /api/settings/collage-template: GET (public) + PUT (admin)
+
+Client library (src/lib/collage-compositing.ts):
+  - detectHolesFromAlpha: connected-component labeling on alpha channel
+    + computes centroid + angle via image moments:
+      theta = 0.5 * atan2(2*mu11, mu20 - mu02)
+  - drawImageCover / drawImageContain: cover/contain fit helpers
+  - compositeCollage: draws N photos into detected slots (rotated), overlays frame
+  - detectTemplateSlots: public API for admin UI to preview slot count
+  - resizePhoto: pre-resize to 1600px
+
+Admin UI (AdminPanel Upload Mandiri tab):
+  - Collage Mode config card (after Frame Overlay card):
+    * Toggle enable/disable
+    * PNG template upload with checkerboard transparency preview
+    * Auto-detected slot count indicator (green/amber)
+    * Fit/Fill mode selector (2-button grid)
+    * Save button
+  - Dynamic import of detectTemplateSlots (lazy-loaded)
+
+Visitor /upload page:
+  - Fetches collage config on mount (parallel with frame config)
+  - If collage active: capture stores RAW photos into collageSlotPhotos
+  - When all N slots filled → compositeCollage() → 1 composite → upload queue
+  - Slot progress indicator: 'Slot 1/2', 'Slot 2/2'
+  - Slot photos preview grid (2-col, filled/empty slots)
+  - Camera overlay shows collage template when collage active
+  - File upload also fills collage slots
+  - Reset Slot button
+  - Collage takes priority over single-frame mode
+
+maxPhotos behavior:
+  - Single-frame: maxPhotos = max individual photos per session (1-20)
+  - Collage mode: maxPhotos = max collage outputs per session
+    (each collage = N photos composited into 1)
+  Both modes respect the maxPhotos setting independently.
+
+Deployed:
+  - wrangler: version f457ff28
+  - GitHub push: commit dd1757f
+  - CI/CD: will auto-deploy
+
+Verified:
+  - GET /api/settings/collage-template → {enabled:false, templateImage:'', fitMode:'fill'} ✓
+  - PUT without admin → 403 ✓
+  - /upload page renders (HTTP 200, 0 console errors) ✓
+  - Home page still works ✓
+
+Stage Summary:
+  - ✅ Collage Mode fully implemented (ARAY v4.7.67 algorithm ported)
+  - ✅ Smart slot detection (alpha channel + image moments for rotation)
+  - ✅ Fit/Fill mode selectable
+  - ✅ Admin UI with auto-detected slot count + transparency preview
+  - ✅ Visitor /upload page with slot progress + collage compositing
+  - ✅ Deployed + verified
+  - ℹ️ Admin needs to upload actual 2-slot PNG template to activate
