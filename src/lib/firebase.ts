@@ -26,8 +26,16 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// We request Google Drive read-only access to browse folders and get photo metadata
-provider.addScope("https://www.googleapis.com/auth/drive.readonly");
+// Request full Drive access (read + write) — needed for:
+//   - Reading photos during sync (Drive → LIHUM)
+//   - Uploading visitor photos (LIHUM → Drive)
+provider.addScope("https://www.googleapis.com/auth/drive");
+// Force consent screen so we get a refresh_token (required for server-side
+// background sync without admin keeping a tab open).
+// The first sign-in MUST go through consent to issue a refresh_token.
+provider.setCustomParameters({
+  prompt: "consent",
+});
 
 // Cache token in memory
 let cachedAccessToken: string | null = null;
@@ -55,9 +63,12 @@ export const initAuth = (
 };
 
 // Admin Google Auth Popup Sign In
+// Returns user + accessToken. Refresh token (if issued) is stored via the
+// /api/settings/drive-sync-token endpoint after sign-in completes.
 export const adminSignInWithGoogle = async (): Promise<{
   user: User;
   accessToken: string;
+  refreshToken?: string;
 } | null> => {
   try {
     isSigningIn = true;
@@ -70,7 +81,14 @@ export const adminSignInWithGoogle = async (): Promise<{
     }
 
     cachedAccessToken = token;
-    return { user: result.user, accessToken: token };
+
+    // Extract refresh token from the user object. Firebase exposes it via
+    // user.stsTokenManager.refreshToken (internal API, but stable for years).
+    // We send it to the server for storage so background sync can run 24/7
+    // without requiring the admin to keep a browser tab open.
+    const refreshToken = (result.user as any)?.stsTokenManager?.refreshToken as string | undefined;
+
+    return { user: result.user, accessToken: token, refreshToken };
   } catch (error: any) {
     console.error("Firebase Sign In Error:", error);
     throw error;

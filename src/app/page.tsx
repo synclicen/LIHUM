@@ -177,6 +177,23 @@ export default function App() {
           setRole(data.role);
           if (data.role) {
             setIsAdminMode(true);
+            // Save refresh token to server so background sync can run 24/7
+            // without admin keeping a tab open. Fire-and-forget (non-blocking).
+            if (result.refreshToken) {
+              fetch("/api/settings/drive-sync-token", {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-user-email": result.user.email || "",
+                },
+                body: JSON.stringify({
+                  refreshToken: result.refreshToken,
+                  userEmail: result.user.email,
+                }),
+              }).catch((err) =>
+                console.warn("Failed to save refresh token:", err)
+              );
+            }
           } else {
             setIsAdminMode(false);
             alert(

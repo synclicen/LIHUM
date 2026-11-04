@@ -1229,6 +1229,87 @@ export async function setCollageConfig(
   ]);
 }
 
+// ---------- Drive Sync Token (refresh token for visitor photo upload) ----------
+//
+// When an admin logs in, we save their Google OAuth refresh token to D1.
+// The Worker can then exchange it for short-lived access tokens and run
+// background sync (upload visitor photos to Drive) 24/7 without requiring
+// the admin to keep a browser tab open.
+//
+// Stored as 2 Setting rows:
+//   drive_sync_refresh_token — the refresh token (sensitive, never returned to client)
+//   drive_sync_user_email — which admin provided the token (for display)
+
+const DRIVE_SYNC_TOKEN_KEY = "drive_sync_refresh_token";
+const DRIVE_SYNC_EMAIL_KEY = "drive_sync_user_email";
+
+export interface DriveSyncTokenConfig {
+  connected: boolean;
+  userEmail: string;
+  connectedAt: string;
+}
+
+export async function getDriveSyncTokenConfig(): Promise<DriveSyncTokenConfig> {
+  const tokenRes = await db.execute({
+    sql: "SELECT value, updatedAt FROM Setting WHERE key = ? LIMIT 1",
+    args: [DRIVE_SYNC_TOKEN_KEY],
+  });
+  const emailRes = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [DRIVE_SYNC_EMAIL_KEY],
+  });
+  const hasToken = tokenRes.rows.length > 0 && String((tokenRes.rows[0] as Record<string, unknown>).value).length > 0;
+  const userEmail = emailRes.rows.length > 0 ? String((emailRes.rows[0] as Record<string, unknown>).value) : "";
+  const connectedAt = tokenRes.rows.length > 0 ? String((tokenRes.rows[0] as Record<string, unknown>).updatedAt) : "";
+  return {
+    connected: hasToken,
+    userEmail,
+    connectedAt,
+  };
+}
+
+export async function getDriveSyncRefreshToken(): Promise<string | null> {
+  const r = await db.execute({
+    sql: "SELECT value FROM Setting WHERE key = ? LIMIT 1",
+    args: [DRIVE_SYNC_TOKEN_KEY],
+  });
+  if (r.rows.length === 0) return null;
+  const val = String((r.rows[0] as Record<string, unknown>).value);
+  return val || null;
+}
+
+export async function setDriveSyncToken(refreshToken: string, userEmail: string): Promise<void> {
+  const now = new Date().toISOString();
+  await db.batch([
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [DRIVE_SYNC_TOKEN_KEY, refreshToken, now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [DRIVE_SYNC_EMAIL_KEY, userEmail, now],
+    },
+  ]);
+}
+
+export async function clearDriveSyncToken(): Promise<void> {
+  const now = new Date().toISOString();
+  await db.batch([
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [DRIVE_SYNC_TOKEN_KEY, "", now],
+    },
+    {
+      sql: `INSERT INTO Setting (key, value, updatedAt) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
+      args: [DRIVE_SYNC_EMAIL_KEY, "", now],
+    },
+  ]);
+}
+
 // ---------- Camera Global Config (stored as a single JSON Setting) ----------
 export interface CameraConfig {
   filter: string;

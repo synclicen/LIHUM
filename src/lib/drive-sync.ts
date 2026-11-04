@@ -12,9 +12,13 @@ import {
   replaceProjectPhotos,
   updateProjectSync,
   clearNeedsSync,
+  getDriveSyncRefreshToken,
+  getSetting,
+  setSetting,
   type NewPhotoInput,
   type SyncDelta,
 } from "@/lib/queries";
+import { db } from "@/lib/db";
 
 export interface SyncResult {
   success: boolean;
@@ -436,5 +440,353 @@ export async function syncProjectWithToken(
     filteredStats,
     debug: folderErrors.length > 0 ? folderErrors.join("; ") : undefined,
     lastSyncedAt,
+  };
+}
+
+// ===========================================================================
+// Visitor Photo → Google Drive sync (LIHUM → Drive direction)
+//
+// Visitors upload photos via /upload; those photos are stored as base64 data
+// URLs in the Photo.visitorData column. This module periodically uploads them
+// to the project's Google Drive folder (so D1 storage doesn't fill up) and
+// clears visitorData after a successful upload.
+//
+// Auth: the admin's Firebase refresh token is stored in D1 (key
+// `drive_sync_refresh_token`). It is exchanged for a short-lived (1h) Google
+// OAuth access token via Firebase's securetoken endpoint. Firebase Auth
+// tokens ARE Google OAuth tokens, so the resulting access token works with
+// the Drive API directly — no client_id / client_secret required.
+// ===========================================================================
+
+const FIREBASE_API_KEY = "AIzaSyAC_DfA1kfZhDn8DcHcJdl4edM3J52Gt-I";
+const LAST_DRIVE_SYNC_KEY = "last_drive_sync";
+
+/** Visitor-photo sync result returned by `syncVisitorPhotosToDrive()`. */
+export interface VisitorPhotoSyncResult {
+  synced: number;
+  failed: number;
+  remaining: number;
+}
+
+/**
+ * Exchanges a Firebase refresh token for a short-lived Google OAuth access
+ * token (valid ~1 hour). Firebase Auth tokens are Google OAuth tokens under
+ * the hood, so the returned access_token works with the Drive API.
+ *
+ * Endpoint: https://securetoken.googleapis.com/v1/token?key=<API_KEY>
+ * Body:    grant_type=refresh_token&refresh_token=<token>
+ */
+export async function exchangeRefreshTokenForAccessToken(
+  refreshToken: string
+): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
+  const res = await fetch(
+    `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(
+      `Failed to exchange refresh token: HTTP ${res.status} — ${errText.slice(0, 200)}`
+    );
+  }
+  const data = (await res.json()) as { access_token?: string };
+  if (!data.access_token) {
+    throw new Error("securetoken response missing access_token field");
+  }
+  return data.access_token;
+}
+
+export interface DriveUploadResult {
+  fileId: string;
+  thumbnailLink: string;
+  webContentLink: string;
+}
+
+/**
+ * Uploads a single photo (base64-encoded) to a Drive folder using multipart
+ * upload. Returns the Drive file metadata on success, or null on failure.
+ *
+ * Endpoint:
+ *   https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart
+ *
+ * Body layout (multipart/related):
+ *   --BOUNDARY\r\n
+ *   Content-Type: application/json; charset=UTF-8\r\n\r\n
+ *   {"name":"file.jpg","parents":["FOLDER_ID"]}\r\n
+ *   --BOUNDARY\r\n
+ *   Content-Type: image/jpeg\r\n\r\n
+ *   <binary image bytes>\r\n
+ *   --BOUNDARY--\r\n
+ */
+export async function uploadPhotoToDrive(
+  accessToken: string,
+  folderId: string,
+  fileName: string,
+  base64Data: string,
+  mimeType: string
+): Promise<DriveUploadResult | null> {
+  // Decode base64 → binary. `atob` is a Web Standard available on Workers.
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const boundary =
+    "lihum-" + Math.random().toString(36).slice(2) + "-" + Date.now();
+  const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
+
+  // Build the multipart body by concatenating Uint8Array parts. Using
+  // TextEncoder ensures correct UTF-8 encoding of the textual frame parts.
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [
+    enc.encode(
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`
+    ),
+    enc.encode(metadata),
+    enc.encode(`\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    bytes,
+    enc.encode(`\r\n--${boundary}--\r\n`),
+  ];
+  const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
+  const body = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const p of parts) {
+    body.set(p, offset);
+    offset += p.length;
+  }
+
+  const res = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,thumbnailLink,webContentLink",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error(
+      `[DriveSync] Upload failed for "${fileName}" → HTTP ${res.status}: ${errText.slice(0, 200)}`
+    );
+    return null;
+  }
+
+  const data = (await res.json()) as {
+    id?: string;
+    thumbnailLink?: string;
+    webContentLink?: string;
+  };
+  if (!data.id) {
+    console.error(
+      `[DriveSync] Upload returned no file id for "${fileName}"`
+    );
+    return null;
+  }
+
+  return {
+    fileId: String(data.id),
+    thumbnailLink: String(data.thumbnailLink ?? ""),
+    webContentLink: String(data.webContentLink ?? ""),
+  };
+}
+
+/**
+ * Parses a visitorData data URL into { mimeType, base64 }.
+ * Format: "data:image/jpeg;base64,<base64>"
+ * Returns null if the format is invalid.
+ */
+function parseVisitorData(
+  visitorData: string
+): { mimeType: string; base64: string } | null {
+  const match = visitorData.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], base64: match[2] };
+}
+
+interface PendingVisitorPhoto {
+  id: string;
+  name: string;
+  mimeType: string;
+  visitorData: string;
+  projectId: string;
+  driveFolderId: string;
+}
+
+/**
+ * Main sync routine. Fetches pending visitor photos (those with visitorData
+ * set, whose parent project has a Drive folder configured), uploads each to
+ * the project's Drive folder, and on success sets `thumbnailLink` /
+ * `webContentLink` from the Drive response and CLEARS `visitorData` to free
+ * up D1 storage.
+ *
+ * The photo's id (the local `visitor_<ts>_<i>_<rand>` UUID) is intentionally
+ * NOT changed — the gallery view, /api/visitor-photo endpoint, and any
+ * external share links continue to reference the same row. After sync the
+ * gallery shows the Drive-hosted thumbnailLink directly (no DB hit).
+ *
+ * Defaults to 5 photos per call to stay within the Cloudflare Worker CPU
+ * limit (~10s wall time). Call this endpoint repeatedly to drain a backlog.
+ *
+ * Returns a summary: { synced, failed, remaining }.
+ */
+export async function syncVisitorPhotosToDrive(
+  limit = 5
+): Promise<VisitorPhotoSyncResult> {
+  // 1. Refresh token must be configured.
+  const refreshToken = await getDriveSyncRefreshToken();
+  if (!refreshToken) {
+    // Nothing to do — admin hasn't connected their Google account.
+    return { synced: 0, failed: 0, remaining: 0 };
+  }
+
+  // 2. Fetch pending visitor photos. We JOIN Project so we only pick photos
+  //    whose gallery has a Drive folder to upload into. After sync,
+  //    visitorData is cleared so the row no longer matches this query.
+  const pendingRes = await db.execute({
+    sql: `SELECT p.id, p.name, p.mimeType, p.visitorData, p.projectId,
+                 proj.driveFolderId
+          FROM Photo p
+          JOIN Project proj ON proj.id = p.projectId
+          WHERE p.visitorData != ''
+            AND proj.driveFolderId != ''
+          ORDER BY p.createdTime ASC
+          LIMIT ?`,
+    args: [limit],
+  });
+
+  const pending = pendingRes.rows as unknown as PendingVisitorPhoto[];
+  if (pending.length === 0) {
+    // Still record the sync attempt so the admin UI's "last sync" updates.
+    await setSetting(LAST_DRIVE_SYNC_KEY, new Date().toISOString());
+    return { synced: 0, failed: 0, remaining: 0 };
+  }
+
+  // 3. Exchange refresh token for short-lived access token.
+  let accessToken: string;
+  try {
+    accessToken = await exchangeRefreshTokenForAccessToken(refreshToken);
+  } catch (err: any) {
+    console.error(
+      `[DriveSync] Failed to obtain access token: ${err?.message || err}`
+    );
+    // Don't write last_sync — the sync didn't actually run. Admin can see
+    // the same error in Worker logs (Cloudflare dashboard).
+    return { synced: 0, failed: 0, remaining: pending.length };
+  }
+
+  // 4. Upload each pending photo. Continue on individual failure so one
+  //    bad photo (e.g. invalid base64, transient Drive 5xx) doesn't block
+  //    the rest of the batch.
+  let synced = 0;
+  let failed = 0;
+  for (const photo of pending) {
+    const parsed = parseVisitorData(photo.visitorData);
+    if (!parsed) {
+      console.warn(
+        `[DriveSync] Photo ${photo.id} has invalid visitorData format — skipping`
+      );
+      failed++;
+      continue;
+    }
+
+    // Use the stored display name if present, else a sane fallback.
+    const fileName =
+      photo.name && photo.name.trim().length > 0
+        ? photo.name
+        : `visitor-${photo.id}.jpg`;
+
+    const result = await uploadPhotoToDrive(
+      accessToken,
+      photo.driveFolderId,
+      fileName,
+      parsed.base64,
+      parsed.mimeType
+    );
+
+    if (!result) {
+      failed++;
+      continue;
+    }
+
+    // 5. On success: store Drive links + clear visitorData. We do NOT touch
+    //    the row's id, mimeType, or any other column — those are already
+    //    correct from the original visitor-upload insert.
+    try {
+      await db.execute({
+        sql: `UPDATE Photo
+              SET thumbnailLink = ?, webContentLink = ?, visitorData = ''
+              WHERE id = ? AND projectId = ?`,
+        args: [
+          result.thumbnailLink,
+          result.webContentLink,
+          photo.id,
+          photo.projectId,
+        ],
+      });
+      synced++;
+      console.log(
+        `[DriveSync] Uploaded ${photo.id} → Drive file ${result.fileId}`
+      );
+    } catch (err: any) {
+      // Photo was uploaded to Drive but the DB update failed. Log loudly —
+      // this needs manual attention (otherwise re-running sync would
+      // duplicate the file on Drive on the next pass, since visitorData
+      // is still set).
+      console.error(
+        `[DriveSync] Drive upload succeeded for ${photo.id} (Drive id ${result.fileId}) but DB update failed: ${err?.message || err}`
+      );
+      failed++;
+    }
+  }
+
+  // 6. Count remaining pending photos (across the whole table, not just
+  //    this batch) for the response.
+  const remainingRes = await db.execute(
+    "SELECT COUNT(*) AS c FROM Photo WHERE visitorData != ''"
+  );
+  const remaining = Number(
+    (remainingRes.rows[0] as Record<string, unknown>)?.c ?? 0
+  );
+
+  await setSetting(LAST_DRIVE_SYNC_KEY, new Date().toISOString());
+
+  return { synced, failed, remaining };
+}
+
+/**
+ * Returns the visitor-photo → Drive sync status for the admin UI:
+ *   - pending: count of photos still holding base64 in D1 (visitorData != '')
+ *   - refreshConnected: whether an admin refresh token is stored
+ *   - lastSyncAt: ISO timestamp of the last sync attempt (or '')
+ *
+ * Used by GET /api/settings/drive-sync.
+ */
+export async function getDriveSyncStatus(): Promise<{
+  pending: number;
+  refreshConnected: boolean;
+  lastSyncAt: string;
+}> {
+  const [countRes, token, lastSyncAt] = await Promise.all([
+    db.execute("SELECT COUNT(*) AS c FROM Photo WHERE visitorData != ''"),
+    getDriveSyncRefreshToken(),
+    getSetting(LAST_DRIVE_SYNC_KEY),
+  ]);
+  return {
+    pending: Number((countRes.rows[0] as Record<string, unknown>)?.c ?? 0),
+    refreshConnected: !!token,
+    lastSyncAt: lastSyncAt || "",
   };
 }

@@ -35,6 +35,8 @@ import {
   BellRing,
   Settings as SettingsIcon,
   Wrench,
+  Cloud,
+  CheckCircle2,
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -173,6 +175,17 @@ export default function AdminPanel({
   const [collageLoading, setCollageLoading] = useState(false);
   const [collageSaving, setCollageSaving] = useState(false);
   const [collageLoaded, setCollageLoaded] = useState(false);
+
+  // ── Drive Sync state (visitor photos → Google Drive) ──
+  // Admin connects Google account → refresh token saved → Worker auto-syncs
+  // visitor photos to Drive folder sumber galeri 24/7.
+  const [driveSyncConnected, setDriveSyncConnected] = useState(false);
+  const [driveSyncEmail, setDriveSyncEmail] = useState("");
+  const [driveSyncPending, setDriveSyncPending] = useState(0);
+  const [driveSyncLoading, setDriveSyncLoading] = useState(false);
+  const [driveSyncSyncing, setDriveSyncSyncing] = useState(false);
+  const [driveSyncLastSync, setDriveSyncLastSync] = useState("");
+  const [driveSyncLoaded, setDriveSyncLoaded] = useState(false);
 
   // ── Upload Mandiri (visitor self-upload) state ──
   const [allowVisitorUpload, setAllowVisitorUpload] = useState(false);
@@ -1096,6 +1109,88 @@ export default function AdminPanel({
     reader.onerror = () => setErrorMsg("Gagal membaca file template.");
     reader.readAsDataURL(file);
   }, []);
+
+  // ── Drive Sync: load status + trigger sync ──
+  const loadDriveSyncStatus = useCallback(async () => {
+    setDriveSyncLoading(true);
+    try {
+      const res = await fetch("/api/settings/drive-sync", {
+        headers: { "x-user-email": userEmail },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setDriveSyncConnected(!!data.refreshConnected);
+      setDriveSyncPending(data.pending || 0);
+      setDriveSyncLastSync(data.lastSyncAt || "");
+      setDriveSyncLoaded(true);
+      // Also fetch connected email
+      const tokenRes = await fetch("/api/settings/drive-sync-token", {
+        headers: { "x-user-email": userEmail },
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        setDriveSyncEmail(tokenData.userEmail || "");
+      }
+    } catch (err) {
+      console.error("[DriveSync] Status load failed:", err);
+    } finally {
+      setDriveSyncLoading(false);
+    }
+  }, [userEmail]);
+
+  const triggerDriveSync = useCallback(async () => {
+    setDriveSyncSyncing(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch("/api/settings/drive-sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-email": userEmail,
+        },
+        body: JSON.stringify({ limit: 5 }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(data.error || "Gagal sync ke Drive.");
+        return;
+      }
+      setSuccessMsg(
+        `Sync selesai: ${data.synced} foto dipindah ke Drive, ${data.failed} gagal, ${data.remaining} menunggu.`
+      );
+      setTimeout(() => setSuccessMsg(""), 6000);
+      // Refresh status
+      loadDriveSyncStatus();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal sync ke Drive.");
+    } finally {
+      setDriveSyncSyncing(false);
+    }
+  }, [userEmail, loadDriveSyncStatus]);
+
+  const disconnectDriveSync = useCallback(async () => {
+    if (!confirm("Putuskan koneksi Google Drive? Foto visitor tidak akan sync otomatis sampai Anda login ulang.")) return;
+    try {
+      await fetch("/api/settings/drive-sync-token", {
+        method: "DELETE",
+        headers: { "x-user-email": userEmail },
+      });
+      setDriveSyncConnected(false);
+      setDriveSyncEmail("");
+      setSuccessMsg("Koneksi Google Drive diputus.");
+      setTimeout(() => setSuccessMsg(""), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Gagal memutus koneksi.");
+    }
+  }, [userEmail]);
+
+  // Load drive sync status when Settings tab opened
+  useEffect(() => {
+    if (activeTab === "settings" && !driveSyncLoaded) {
+      loadDriveSyncStatus();
+    }
+  }, [activeTab, driveSyncLoaded, loadDriveSyncStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3364,6 +3459,179 @@ export default function AdminPanel({
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          </div>
+
+          {/* ── Google Drive Sync (visitor photos → Drive) ──
+              Admin connects Google account → refresh token saved → Worker
+              auto-syncs visitor photos to Drive folder sumber galeri 24/7
+              (no admin tab needed). */}
+          <div className="bg-[#120A21] border border-[#D4AF37]/25 rounded-2xl overflow-hidden shadow-2xl">
+            <div className="flex items-center space-x-2.5 mb-4 pb-3 border-b border-violet-900/30">
+              <Cloud className="w-4 h-4 text-[#D4AF37]" />
+              <h3 className="text-sm font-serif font-bold text-white">
+                Sinkronisasi Google Drive
+              </h3>
+              {driveSyncConnected && (
+                <span className="ml-auto text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  TERHUBUNG
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Hubungkan akun Google Anda agar foto yang diupload pengunjung
+                otomatis dipindah ke folder Google Drive sumber galeri. Sync
+                berjalan <strong>24/7 otomatis</strong> — tidak perlu tab admin
+                terbuka. Storage D1 tetap kecil, foto aman di Drive.
+              </p>
+
+              {/* Connection status */}
+              {driveSyncLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <RefreshCw className="w-4 h-4 text-[#D4AF37] animate-spin" />
+                  <span className="ml-2 text-xs text-slate-400">Memuat status...</span>
+                </div>
+              ) : driveSyncConnected ? (
+                <div className="space-y-3">
+                  {/* Connected info */}
+                  <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider">Akun Terhubung</span>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                    <p className="text-xs text-white font-mono break-all">{driveSyncEmail}</p>
+                    {driveSyncLastSync && (
+                      <p className="text-[10px] text-slate-500">
+                        Sync terakhir: {new Date(driveSyncLastSync).toLocaleString("id-ID")}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Pending photos */}
+                  <div className="bg-[#1F0F3D]/50 border border-violet-950/50 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] text-slate-300 uppercase tracking-wider font-bold">
+                        Foto Menunggu Sync
+                      </span>
+                      <span className={`text-sm font-bold ${
+                        driveSyncPending > 0 ? "text-amber-300" : "text-emerald-300"
+                      }`}>
+                        {driveSyncPending}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mb-2">
+                      {driveSyncPending > 0
+                        ? "Foto visitor di D1, belum dipindah ke Drive."
+                        : "Semua foto sudah tersinkronisasi ke Drive."}
+                    </p>
+
+                    {/* Sync button */}
+                    <button
+                      type="button"
+                      onClick={triggerDriveSync}
+                      disabled={driveSyncSyncing || driveSyncPending === 0}
+                      className="w-full py-2 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-[11px] font-bold hover:bg-[#D4AF37]/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                    >
+                      {driveSyncSyncing ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          Menyinkronkan...
+                        </>
+                      ) : (
+                        <>
+                          <Cloud className="w-3.5 h-3.5" />
+                          Sync Sekarang
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Disconnect button */}
+                  <button
+                    type="button"
+                    onClick={disconnectDriveSync}
+                    disabled={driveSyncSyncing}
+                    className="w-full py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-[10px] font-bold hover:bg-red-500/20 transition-all disabled:opacity-50"
+                  >
+                    Putuskan Koneksi
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Not connected */}
+                  <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3">
+                    <p className="text-[10px] text-amber-200 mb-1 font-bold">
+                      ⚠ Belum Terhubung
+                    </p>
+                    <p className="text-[10px] text-slate-300 leading-relaxed">
+                      Untuk mengaktifkan auto-sync, login sebagai admin via
+                      "MASUK PENGELOLA" di halaman utama. Sistem akan otomatis
+                      menyimpan koneksi Google Anda.
+                    </p>
+                  </div>
+
+                  {/* Setup guide */}
+                  <details className="bg-[#1F0F3D]/40 border border-violet-950/50 rounded-xl overflow-hidden">
+                    <summary className="cursor-pointer px-3 py-2.5 text-[11px] font-bold text-slate-300 hover:text-white transition-colors flex items-center justify-between">
+                      <span>📋 Panduan Setup (sekali saja)</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </summary>
+                    <div className="px-3 pb-3 space-y-2.5 text-[10px] text-slate-400 leading-relaxed border-t border-violet-950/50">
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 1:</strong> Buka{" "}
+                        <a
+                          href="https://console.cloud.google.com/auth/branding"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#D4AF37] underline hover:text-[#E4C247]"
+                        >
+                          Google Cloud Console → Auth Platform
+                        </a>
+                      </div>
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 2:</strong> Pilih
+                        project <code className="bg-[#0C061A] px-1.5 py-0.5 rounded text-[#D4AF37]">Default Gemini Project</code>
+                        (project Firebase LIHUM)
+                      </div>
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 3:</strong> Klik
+                        "Branding" → isi App name: <code className="bg-[#0C061A] px-1.5 py-0.5 rounded text-[#D4AF37]">LIHUM</code>,
+                        email support, home page: <code className="bg-[#0C061A] px-1.5 py-0.5 rounded text-[#D4AF37]">https://lihum.synclicen.workers.dev</code>
+                      </div>
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 4:</strong> Klik
+                        "Data Access" → tambah scope:{" "}
+                        <code className="bg-[#0C061A] px-1.5 py-0.5 rounded text-[#D4AF37] break-all">https://www.googleapis.com/auth/drive</code>
+                      </div>
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 5:</strong> Klik
+                        "Audience" → "PUBLISH APP" (dari Testing → In Production)
+                      </div>
+                      <div>
+                        <strong className="text-[#D4AF37]">Langkah 6:</strong> Login
+                        sebagai admin di LIHUM (klik "MASUK PENGELOLA") → koneksi
+                        otomatis tersimpan.
+                      </div>
+                      <p className="text-amber-300/70 pt-1 border-t border-violet-950/50">
+                        ⚠ Abaikan warning "Missing domain" — Firebase Auth
+                        sudah handle domain LIHUM secara otomatis.
+                      </p>
+                    </div>
+                  </details>
+
+                  <button
+                    type="button"
+                    onClick={loadDriveSyncStatus}
+                    className="w-full py-2 rounded-xl bg-[#1F0F3D]/60 border border-slate-700/50 text-slate-400 text-[10px] font-bold hover:bg-[#1F0F3D] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Cek Status Koneksi
+                  </button>
+                </div>
               )}
             </div>
           </div>
