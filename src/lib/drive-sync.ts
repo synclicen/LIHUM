@@ -632,6 +632,9 @@ interface PendingVisitorPhoto {
   visitorData: string;
   projectId: string;
   driveFolderId: string;
+  size?: string;
+  createdTime?: string;
+  modifiedTime?: string;
 }
 
 /**
@@ -681,6 +684,7 @@ export async function syncVisitorPhotosToDrive(
   //    visitorData is cleared so the row no longer matches this query.
   const pendingRes = await db.execute({
     sql: `SELECT p.id, p.name, p.mimeType, p.visitorData, p.projectId,
+                 p.size, p.createdTime, p.modifiedTime,
                  proj.driveFolderId
           FROM Photo p
           JOIN Project proj ON proj.id = p.projectId
@@ -735,24 +739,35 @@ export async function syncVisitorPhotosToDrive(
         continue;
       }
 
-    // 5. On success: store Drive links + clear visitorData. We do NOT touch
-    //    the row's id, mimeType, or any other column — those are already
-    //    correct from the original visitor-upload insert.
+    // 5. On success: DELETE the old visitor_ row and INSERT a new row with
+    //    the Drive file id. This prevents duplicates when the Drive→D1
+    //    auto-sync runs later — it will find the Drive file id already in D1
+    //    and treat it as "unchanged" instead of inserting a duplicate.
     try {
-      await db.execute({
-        sql: `UPDATE Photo
-              SET thumbnailLink = ?, webContentLink = ?, visitorData = ''
-              WHERE id = ? AND projectId = ?`,
-        args: [
-          result.thumbnailLink,
-          result.webContentLink,
-          photo.id,
-          photo.projectId,
-        ],
-      });
+      await db.batch([
+        {
+          sql: "DELETE FROM Photo WHERE id = ? AND projectId = ?",
+          args: [photo.id, photo.projectId],
+        },
+        {
+          sql: `INSERT INTO Photo (id, name, mimeType, thumbnailLink, webContentLink, size, createdTime, modifiedTime, aiHidden, visitorData, projectId)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?)`,
+          args: [
+            result.fileId,
+            photo.name,
+            photo.mimeType,
+            result.thumbnailLink,
+            result.webContentLink,
+            photo.size || "",
+            photo.createdTime || new Date().toISOString().split("T")[0],
+            photo.modifiedTime || new Date().toISOString().split("T")[0],
+            photo.projectId,
+          ],
+        },
+      ]);
       synced++;
       console.log(
-        `[DriveSync] Uploaded ${photo.id} → Drive file ${result.fileId}`
+        `[DriveSync] Replaced ${photo.id} → Drive file ${result.fileId} (no duplicate)`
       );
     } catch (err: any) {
       // Photo was uploaded to Drive but the DB update failed. Log loudly —
