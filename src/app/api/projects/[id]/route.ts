@@ -63,103 +63,107 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // SKIP ensureSeed on GET — saves 3 D1 reads per new isolate.
-  const { id } = await params;
-  const { searchParams } = new URL(req.url);
-  const search = searchParams.get("search") || "";
-  const password = searchParams.get("password") || "";
-  const sortRaw = searchParams.get("sort") || "default";
-  const VALID_SORTS: PhotoSort[] = ["default", "name-asc", "name-desc", "modified-desc", "modified-asc"];
-  const sort: PhotoSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as PhotoSort) : "default";
+  try {
+    // SKIP ensureSeed on GET — saves 3 D1 reads per new isolate.
+    const { id } = await params;
+    const { searchParams } = new URL(req.url);
+    const search = searchParams.get("search") || "";
+    const password = searchParams.get("password") || "";
+    const sortRaw = searchParams.get("sort") || "default";
+    const VALID_SORTS: PhotoSort[] = ["default", "name-asc", "name-desc", "modified-desc", "modified-asc"];
+    const sort: PhotoSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as PhotoSort) : "default";
 
-  // Admin/manager sees all photos (including AI-hidden). Public visitors
-  // only see photos not hidden by AI filter.
-  const userEmail = req.headers.get("x-user-email") || undefined;
-  const userRole = await getAccountRole(userEmail);
-  const isAdmin = userRole !== null;
-
-  const data = await getProjectWithPhotos(id, sort, isAdmin);
-  if (!data) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  const { project, photos } = data;
-
-  // ── Private gallery: verify password before returning any photos ──
-  // Admins/managers bypass the password check (they manage the gallery).
-  if (project.visibility === "private") {
+    // Admin/manager sees all photos (including AI-hidden). Public visitors
+    // only see photos not hidden by AI filter.
     const userEmail = req.headers.get("x-user-email") || undefined;
-    const adminRole = await getAccountRole(userEmail);
-    const isAdmin = adminRole !== null;
+    const userRole = await getAccountRole(userEmail);
+    const isAdmin = userRole !== null;
 
-    const ok = isAdmin || (password ? await verifyPassword(password, project.password) : false);
-    if (!ok) {
-      // Return project metadata (so the UI can render the password prompt)
-      // but with NO photos and a requiresPassword flag.
-      return NextResponse.json({
-        ...projectOut(project),
-        photos: [],
-        requiresPassword: true,
-        passwordError: password
-          ? "Password salah. Silakan coba lagi atau hubungi admin."
-          : undefined,
-      });
+    const data = await getProjectWithPhotos(id, sort, isAdmin);
+    if (!data) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
-  }
 
-  // ── Password OK (or public gallery) — filter photos by display mode + search ──
-  let filtered = photos;
-  if (project.displayMode === "search") {
-    if (!search || search.trim() === "") {
-      filtered = [];
-    } else {
+    const { project, photos } = data;
+
+    // ── Private gallery: verify password before returning any photos ──
+    // Admins/managers bypass the password check (they manage the gallery).
+    if (project.visibility === "private") {
+      const ok = isAdmin || (password ? await verifyPassword(password, project.password) : false);
+      if (!ok) {
+        // Return project metadata (so the UI can render the password prompt)
+        // but with NO photos and a requiresPassword flag.
+        return NextResponse.json({
+          ...projectOut(project),
+          photos: [],
+          requiresPassword: true,
+          passwordError: password
+            ? "Password salah. Silakan coba lagi atau hubungi admin."
+            : undefined,
+        });
+      }
+    }
+
+    // ── Password OK (or public gallery) — filter photos by display mode + search ──
+    let filtered = photos;
+    if (project.displayMode === "search") {
+      if (!search || search.trim() === "") {
+        filtered = [];
+      } else {
+        const q = search.toLowerCase().trim();
+        filtered = photos.filter((p) => p.name.toLowerCase().includes(q));
+      }
+    } else if (search && search.trim() !== "") {
       const q = search.toLowerCase().trim();
       filtered = photos.filter((p) => p.name.toLowerCase().includes(q));
     }
-  } else if (search && search.trim() !== "") {
-    const q = search.toLowerCase().trim();
-    filtered = photos.filter((p) => p.name.toLowerCase().includes(q));
-  }
 
-  // ── Server-side pagination ──
-  // Return only `limit` photos starting from `offset` to avoid sending
-  // 1614 photos (749KB JSON) in a single request. Client requests more
-  // via `?offset=X&limit=Y` as user scrolls (infinite scroll).
-  const offsetParam = Math.max(0, parseInt(searchParams.get("offset") || "0", 10));
-  const limitParam = Math.min(100, parseInt(searchParams.get("limit") || "100", 10));
-  const totalFiltered = filtered.length;
-  const paginatedPhotos = filtered.slice(offsetParam, offsetParam + limitParam);
+    // ── Server-side pagination ──
+    // Return only `limit` photos starting from `offset` to avoid sending
+    // 1614 photos (749KB JSON) in a single request. Client requests more
+    // via `?offset=X&limit=Y` as user scrolls (infinite scroll).
+    const offsetParam = Math.max(0, parseInt(searchParams.get("offset") || "0", 10));
+    const limitParam = Math.min(100, parseInt(searchParams.get("limit") || "100", 10));
+    const totalFiltered = filtered.length;
+    const paginatedPhotos = filtered.slice(offsetParam, offsetParam + limitParam);
 
-  // ── Increment view counter (first page only, non-admin only) ──
-  // Count a "view" only when a visitor opens the gallery for the first time
-  // in this session (offset=0), NOT on every pagination/scroll fetch.
-  // Admins/managers opening the gallery don't inflate the counter.
-  // Fire-and-forget: if D1 writes are blocked (quota), this fails silently.
-  if (!isAdmin && offsetParam === 0) {
-    incrementProjectViews(id).catch(() => {});
-  }
+    // ── Increment view counter (first page only, non-admin only) ──
+    // Count a "view" only when a visitor opens the gallery for the first time
+    // in this session (offset=0), NOT on every pagination/scroll fetch.
+    // Admins/managers opening the gallery don't inflate the counter.
+    // Fire-and-forget: if D1 writes are blocked (quota), this fails silently.
+    if (!isAdmin && offsetParam === 0) {
+      incrementProjectViews(id).catch(() => {});
+    }
 
-  const response = NextResponse.json({
-    ...projectOut(project),
-    photos: paginatedPhotos.map(photoOut),
-    pagination: {
-      offset: offsetParam,
-      limit: limitParam,
-      total: totalFiltered,
-      hasMore: offsetParam + limitParam < totalFiltered,
-    },
-  });
-  // Cache public gallery reads at the edge for 5 minutes during the wisuda
-  // event. With 5000 visitors opening the same gallery, this means ~1 D1
-  // read per 5 min (vs 5000 reads). Admin reads never cached (fresh data).
-  // View counter is batched separately (in-memory buffer + 30s flush), so
-  // edge caching the response doesn't affect counter accuracy much.
-  if (role === null) {
-    response.headers.set("Cache-Control", "public, s-maxage=300, stale-while-revalidate=600");
-  } else {
-    response.headers.set("Cache-Control", "no-store, private");
+    const response = NextResponse.json({
+      ...projectOut(project),
+      photos: paginatedPhotos.map(photoOut),
+      pagination: {
+        offset: offsetParam,
+        limit: limitParam,
+        total: totalFiltered,
+        hasMore: offsetParam + limitParam < totalFiltered,
+      },
+    });
+    // Cache public gallery reads at the edge for 5 minutes during the wisuda
+    // event. With 5000 visitors opening the same gallery, this means ~1 D1
+    // read per 5 min (vs 5000 reads). Admin reads never cached (fresh data).
+    // View counter is batched separately (in-memory buffer + 30s flush), so
+    // edge caching the response doesn't affect counter accuracy much.
+    if (userRole === null) {
+      response.headers.set("Cache-Control", "public, s-maxage=300, stale-while-revalidate=600");
+    } else {
+      response.headers.set("Cache-Control", "no-store, private");
+    }
+    return response;
+  } catch (err: any) {
+    console.error("[GET /api/projects/:id] Error:", err?.message || err, err?.stack?.slice(0, 200));
+    return NextResponse.json(
+      { error: "Internal server error", detail: err?.message || String(err) },
+      { status: 500 }
+    );
   }
-  return response;
 }
 
 // PUT /api/projects/:id — Admin/Manager only
