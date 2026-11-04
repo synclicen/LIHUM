@@ -210,10 +210,13 @@ export default function GalleryView({
   }, [projectId, debouncedQuery, unlockedPassword, userEmail, sortBy]);
 
   // Dynamic automatic polling to detect additions, deletions, or changes.
-  // DISABLED for large galleries (>200 photos) to avoid Cloudflare Workers
-  // rate limiting on free tier. Visitors to large galleries can refresh
-  // manually to see new photos. Small galleries still poll every 30s.
+  // DISABLED for non-admin visitors entirely — they don't need real-time
+  // photo updates during a live event, and polling is the #1 Workers
+  // request drain at scale (10K visitors × 5m poll = 2.9M req/day).
+  // Visitors see the latest photos on page load / manual refresh.
+  // Admins (who may be monitoring uploads) still poll for small galleries.
   useEffect(() => {
+    if (!isAdmin) return; // non-admin: no polling
     if (project?.requiresPassword) return;
     if ((project?.photoCount || 0) > 200) return;
 
@@ -253,7 +256,7 @@ export default function GalleryView({
 
     const intervalId = setInterval(fetchUpdates, 300000); // 5m (was 60s) — reduce D1 reads
     return () => clearInterval(intervalId);
-  }, [projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, project?.photoCount, sortBy]);
+  }, [isAdmin, projectId, debouncedQuery, unlockedPassword, userEmail, project?.requiresPassword, project?.photoCount, sortBy]);
 
   // Handle password submission for private galleries
   const handlePasswordSubmit = async (e: React.FormEvent) => {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findPhotoById, incrementProjectDownloads } from "@/lib/queries";
+import { ensureSeed, getAccountRole } from "@/lib/lihum";
 
 // GET /api/photo-proxy/download?id=FILE_ID&name=FILENAME
 //
@@ -12,6 +13,12 @@ import { findPhotoById, incrementProjectDownloads } from "@/lib/queries";
 // 3. Fallback: redirect to Google Drive (filename = Google's default)
 //
 // On every successful download, increments the parent gallery's downloadCount.
+//
+// HIGH-TRAFFIC OPTIMIZATION: For non-admin visitors, we REDIRECT (302) to
+// Google Drive's download URL instead of streaming through the Worker.
+// This saves Worker CPU + bandwidth — critical for events like wisuda where
+// 20K visitors may download photos. Admins still get the streaming path
+// (with custom filenames) since they're low-volume.
 
 const CACHE_7_DAYS = "public, max-age=604800, s-maxage=604800";
 
@@ -56,10 +63,39 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Real Google Drive photo — try multiple strategies to get the file.
+  // Real Google Drive photo — check if requester is admin.
+  // Non-admins get a 302 redirect to Google Drive directly (saves Worker CPU).
+  // Admins get the streaming path (custom filename, reliable for management).
+  await ensureSeed();
+  const userEmail = req.headers.get("x-user-email") || undefined;
+  const role = await getAccountRole(userEmail);
+
+  // Look up the photo to get webContentLink + projectId (for counter).
+  const photo = await findPhotoById(fileId);
+
+  // ── Non-admin path: redirect directly to Google Drive ──
+  // This is the high-traffic path. 302 redirect = 1 Worker request, no
+  // streaming, no CPU. Browser downloads directly from Google's servers.
+  if (role === null) {
+    // Increment download counter (fire-and-forget).
+    if (photo && photo.projectId) {
+      incrementProjectDownloads(photo.projectId).catch(() => {});
+    }
+    // Redirect to Google's download URL. Filename will be Google's default
+    // (the file ID), but the download works reliably without Worker load.
+    const downloadUrl =
+      photo?.webContentLink ||
+      `https://drive.google.com/uc?export=download&id=${fileId}`;
+    return NextResponse.redirect(downloadUrl, {
+      status: 302,
+      headers: { "Cache-Control": CACHE_7_DAYS },
+    });
+  }
+
+  // ── Admin path: stream through Worker with custom filename ──
+  // Admins are low-volume, so the CPU cost is acceptable. They get
+  // properly named files (useful for bulk download/management).
   try {
-    // Strategy 1: Use webContentLink from DB (most reliable for shared files)
-    const photo = await findPhotoById(fileId);
     const urlsToTry: string[] = [];
 
     if (photo) {
@@ -102,8 +138,6 @@ export async function GET(req: NextRequest) {
     }
 
     // All strategies failed — redirect as fallback.
-    // Still count as a download attempt since the user clicked download
-    // (the browser will fetch directly from Google Drive).
     if (photo && photo.projectId) {
       incrementProjectDownloads(photo.projectId).catch(() => {});
     }

@@ -139,7 +139,7 @@ export async function GET(
     incrementProjectViews(id).catch(() => {});
   }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     ...projectOut(project),
     photos: paginatedPhotos.map(photoOut),
     pagination: {
@@ -149,6 +149,18 @@ export async function GET(
       hasMore: offsetParam + limitParam < totalFiltered,
     },
   });
+  // Cache public gallery reads at the edge for 60s. When 500 visitors open
+  // the same wisuda gallery within 60s, only 1 D1 read happens — the rest
+  // are served from CDN cache. Admin reads are never cached (fresh data).
+  // View counter increment still happens on the origin request (offset=0),
+  // so view counts may be slightly under-counted during cache hits —
+  // acceptable trade-off for the massive request reduction.
+  if (role === null) {
+    response.headers.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+  } else {
+    response.headers.set("Cache-Control", "no-store, private");
+  }
+  return response;
 }
 
 // PUT /api/projects/:id — Admin/Manager only

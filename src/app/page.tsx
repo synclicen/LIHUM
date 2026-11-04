@@ -225,28 +225,37 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Polling for latest metadata. 30s interval (not 15s) to reduce Cloudflare
-  // Workers request volume on free tier — important when thousands of visitors
-  // are online simultaneously. Only polls when the tab is visible (saves
-  // requests when user is on another tab).
+  // Polling for latest metadata. Only admins/managers poll — visitors don't
+  // need real-time gallery list updates (gallery counts rarely change during
+  // a live event). This saves ~1.4M Worker requests/day at 10K concurrent
+  // visitors. Visitors see the latest list on page load / manual refresh.
   useEffect(() => {
+    if (role === null) return; // non-admin: no polling
     const fetchMetadataInterval = setInterval(() => {
       if (document.visibilityState === "visible") {
         loadProjects();
       }
-    }, 300000); // 5m (was 60s) — reduce D1 reads
+    }, 300000); // 5m
 
     return () => clearInterval(fetchMetadataInterval);
-  }, []);
+  }, [role]);
 
   // ── Maintenance Mode checker ──
   //
-  // Polls /api/settings/maintenance every 60s (only when tab visible).
+  // Polls /api/settings/maintenance periodically (only when tab visible).
   // If enabled AND user is not admin/manager, renders MaintenanceScreen.
   // Admins always bypass — they need to access the panel to disable it.
   //
-  // Cost: 1 fetch per 60s = 1,440 reads/day = 0.03% of D1 5M/day limit.
+  // ADAPTIVE INTERVAL for high-traffic events (e.g., wisuda 20K visitors):
+  //   - Admin/manager: poll every 60s (need real-time status for management)
+  //   - Non-admin visitors: poll every 5m (300s) — visitors don't need
+  //     instant maintenance detection; 5 min latency is acceptable and
+  //     saves ~144M Worker requests/day at 20K concurrent visitors.
   useEffect(() => {
+    // Admins poll faster (need to verify maintenance is working + disable it).
+    // Non-admin visitors poll slowly (5 min) to conserve Workers quota.
+    const pollInterval = role !== null ? 60000 : 300000;
+
     const checkMaintenance = async () => {
       if (document.visibilityState !== "visible") return;
       try {
@@ -261,9 +270,9 @@ export default function App() {
       }
     };
     checkMaintenance();
-    const id = setInterval(checkMaintenance, 60000);
+    const id = setInterval(checkMaintenance, pollInterval);
     return () => clearInterval(id);
-  }, []);
+  }, [role]);
 
   // ── Smart Auto-Sync Scheduler ──
   //

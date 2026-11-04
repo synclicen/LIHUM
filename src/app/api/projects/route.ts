@@ -40,6 +40,13 @@ function summaryOut(p: ProjectRow) {
 // Auto-hide: galleries with autoHideDays > 0 that have passed their expiry
 // are treated as hidden (isHidden=true, autoSyncEnabled=false) at READ time.
 // No writes needed — the check is computed on-the-fly from createdAt + autoHideDays.
+//
+// EDGE CACHING: responses are cached at the Cloudflare CDN edge for 60 seconds
+// (s-maxage=60). This means 1000 concurrent visitors hitting /api/projects
+// within the same 60s window result in only 1 origin (D1) read — the other 999
+// are served from the CDN cache. Critical for high-traffic events (wisuda).
+// Admin responses (with x-user-email header) are NOT cached (private) so
+// admins always see fresh data including hidden galleries.
 export async function GET(req: NextRequest) {
   // SKIP ensureSeed on public read — saves 3 D1 reads per new isolate.
   // Schema/seed already done by other routes. Production DB always has data.
@@ -69,7 +76,16 @@ export async function GET(req: NextRequest) {
     projects = projects.filter((p) => p.isHidden === 0);
   }
 
-  return NextResponse.json(projects.map(summaryOut));
+  const response = NextResponse.json(projects.map(summaryOut));
+  // Cache public responses at the edge for 60s — massive savings when
+  // thousands of visitors load the home page simultaneously.
+  // Admin responses are private (never cached) so admins see fresh data.
+  if (role === null) {
+    response.headers.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+  } else {
+    response.headers.set("Cache-Control", "no-store, private");
+  }
+  return response;
 }
 
 // POST /api/projects — Admin/Manager only
