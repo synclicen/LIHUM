@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { ProjectSummary } from "@/types";
+import { adminSignInWithGoogle } from "@/lib/firebase";
 import {
   FolderKanban,
   Plus,
@@ -1143,17 +1144,31 @@ export default function AdminPanel({
     setErrorMsg("");
     setSuccessMsg("");
     try {
-      if (!accessToken) {
-        setErrorMsg("Token Google tidak tersedia. Silakan logout + login ulang sebagai admin.");
+      // Step 1: ALWAYS re-login to get a FRESH access token.
+      // Google OAuth tokens expire after 1 hour. Without re-login, sync fails
+      // with 401. This opens a Google popup; admin just clicks their account.
+      let freshToken: string;
+      try {
+        const reLoginResult = await adminSignInWithGoogle();
+        if (reLoginResult?.accessToken) {
+          freshToken = reLoginResult.accessToken;
+        } else {
+          setErrorMsg("Gagal mendapat token Google. Coba logout + login manual.");
+          return;
+        }
+      } catch (err: any) {
+        setErrorMsg(`Login ulang gagal: ${err.message || err}. Coba logout + login manual.`);
         return;
       }
+
+      // Step 2: Sync with the fresh token
       const res = await fetch("/api/settings/drive-sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-user-email": userEmail,
         },
-        body: JSON.stringify({ limit: 5, accessToken: accessToken }),
+        body: JSON.stringify({ limit: 5, accessToken: freshToken }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1166,13 +1181,13 @@ export default function AdminPanel({
       }
       if (data.failed > 0 && data.synced === 0) {
         setErrorMsg(
-          `Sync gagal: ${data.failed} foto tidak terupload. Token mungkin sudah expired (berlaku 1 jam). ` +
-          `Logout + login ulang untuk mendapat token baru.`
+          `Sync gagal: ${data.failed} foto tidak terupload. ` +
+          `Pastikan akun Google Anda adalah OWNER folder Drive sumber galeri, ` +
+          `atau folder sudah di-share ke akun Anda sebagai Editor.`
         );
       } else if (data.failed > 0) {
         setSuccessMsg(
-          `Sync selesai: ${data.synced} foto berhasil, ${data.failed} gagal, ${data.remaining} menunggu. ` +
-          (data.failed > 0 ? "Foto yang gagal bisa di-sync ulang." : "")
+          `Sync selesai: ${data.synced} foto berhasil, ${data.failed} gagal, ${data.remaining} menunggu.`
         );
       } else {
         setSuccessMsg(
@@ -1180,7 +1195,6 @@ export default function AdminPanel({
         );
       }
       setTimeout(() => setSuccessMsg(""), 6000);
-      // Refresh status
       loadDriveSyncStatus();
     } catch (err: any) {
       console.error("[DriveSync] Trigger error:", err);
@@ -1188,7 +1202,7 @@ export default function AdminPanel({
     } finally {
       setDriveSyncSyncing(false);
     }
-  }, [userEmail, accessToken, loadDriveSyncStatus]);
+  }, [userEmail, loadDriveSyncStatus]);
 
   const disconnectDriveSync = useCallback(async () => {
     if (!confirm("Putuskan koneksi Google Drive? Foto visitor tidak akan sync otomatis sampai Anda login ulang.")) return;
