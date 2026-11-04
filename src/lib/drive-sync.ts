@@ -466,6 +466,7 @@ export interface VisitorPhotoSyncResult {
   synced: number;
   failed: number;
   remaining: number;
+  error?: string; // present if the batch was aborted (e.g. token expired)
 }
 
 /**
@@ -581,6 +582,14 @@ export async function uploadPhotoToDrive(
     console.error(
       `[DriveSync] Upload failed for "${fileName}" → HTTP ${res.status}: ${errText.slice(0, 200)}`
     );
+    // If 401/403, the access token is expired or lacks Drive scope.
+    // Stop the batch — remaining photos will also fail.
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `Token Google expired atau tidak punya akses Drive (HTTP ${res.status}). ` +
+        `Logout + login ulang sebagai admin untuk mendapat token baru.`
+      );
+    }
     return null;
   }
 
@@ -691,37 +700,40 @@ export async function syncVisitorPhotosToDrive(
 
   // 4. Upload each pending photo. Continue on individual failure so one
   //    bad photo (e.g. invalid base64, transient Drive 5xx) doesn't block
-  //    the rest of the batch.
+  //    the rest of the batch. BUT if the access token is expired (401/403),
+  //    we throw to stop the batch — remaining photos would all fail too.
   let synced = 0;
   let failed = 0;
-  for (const photo of pending) {
-    const parsed = parseVisitorData(photo.visitorData);
-    if (!parsed) {
-      console.warn(
-        `[DriveSync] Photo ${photo.id} has invalid visitorData format — skipping`
+  let batchError: string | undefined;
+  try {
+    for (const photo of pending) {
+      const parsed = parseVisitorData(photo.visitorData);
+      if (!parsed) {
+        console.warn(
+          `[DriveSync] Photo ${photo.id} has invalid visitorData format — skipping`
+        );
+        failed++;
+        continue;
+      }
+
+      // Use the stored display name if present, else a sane fallback.
+      const fileName =
+        photo.name && photo.name.trim().length > 0
+          ? photo.name
+          : `visitor-${photo.id}.jpg`;
+
+      const result = await uploadPhotoToDrive(
+        accessToken,
+        photo.driveFolderId,
+        fileName,
+        parsed.base64,
+        parsed.mimeType
       );
-      failed++;
-      continue;
-    }
 
-    // Use the stored display name if present, else a sane fallback.
-    const fileName =
-      photo.name && photo.name.trim().length > 0
-        ? photo.name
-        : `visitor-${photo.id}.jpg`;
-
-    const result = await uploadPhotoToDrive(
-      accessToken,
-      photo.driveFolderId,
-      fileName,
-      parsed.base64,
-      parsed.mimeType
-    );
-
-    if (!result) {
-      failed++;
-      continue;
-    }
+      if (!result) {
+        failed++;
+        continue;
+      }
 
     // 5. On success: store Drive links + clear visitorData. We do NOT touch
     //    the row's id, mimeType, or any other column — those are already
@@ -752,6 +764,12 @@ export async function syncVisitorPhotosToDrive(
       );
       failed++;
     }
+    }
+  } catch (err: any) {
+    // Token expired or Drive API rejected the batch. Record the error
+    // so we can surface it to the admin UI.
+    batchError = err?.message || String(err);
+    console.error(`[DriveSync] Batch error: ${batchError}`);
   }
 
   // 6. Count remaining pending photos (across the whole table, not just
@@ -765,6 +783,11 @@ export async function syncVisitorPhotosToDrive(
 
   await setSetting(LAST_DRIVE_SYNC_KEY, new Date().toISOString());
 
+  // If we hit a batch error (e.g. token expired), include it in the response
+  // so the admin UI can show a helpful message.
+  if (batchError && synced === 0) {
+    return { synced, failed, remaining, error: batchError };
+  }
   return { synced, failed, remaining };
 }
 

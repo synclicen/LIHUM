@@ -1143,6 +1143,10 @@ export default function AdminPanel({
     setErrorMsg("");
     setSuccessMsg("");
     try {
+      if (!accessToken) {
+        setErrorMsg("Token Google tidak tersedia. Silakan logout + login ulang sebagai admin.");
+        return;
+      }
       const res = await fetch("/api/settings/drive-sync", {
         method: "POST",
         headers: {
@@ -1153,17 +1157,34 @@ export default function AdminPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error || "Gagal sync ke Drive.");
+        setErrorMsg(data.error || `Gagal sync ke Drive (HTTP ${res.status}).`);
         return;
       }
-      setSuccessMsg(
-        `Sync selesai: ${data.synced} foto dipindah ke Drive, ${data.failed} gagal, ${data.remaining} menunggu.`
-      );
+      if (data.error) {
+        setErrorMsg(data.error);
+        return;
+      }
+      if (data.failed > 0 && data.synced === 0) {
+        setErrorMsg(
+          `Sync gagal: ${data.failed} foto tidak terupload. Token mungkin sudah expired (berlaku 1 jam). ` +
+          `Logout + login ulang untuk mendapat token baru.`
+        );
+      } else if (data.failed > 0) {
+        setSuccessMsg(
+          `Sync selesai: ${data.synced} foto berhasil, ${data.failed} gagal, ${data.remaining} menunggu. ` +
+          (data.failed > 0 ? "Foto yang gagal bisa di-sync ulang." : "")
+        );
+      } else {
+        setSuccessMsg(
+          `Sync selesai: ${data.synced} foto dipindah ke Drive, ${data.remaining} menunggu.`
+        );
+      }
       setTimeout(() => setSuccessMsg(""), 6000);
       // Refresh status
       loadDriveSyncStatus();
     } catch (err: any) {
-      setErrorMsg(err.message || "Gagal sync ke Drive.");
+      console.error("[DriveSync] Trigger error:", err);
+      setErrorMsg(err.message || "Gagal sync ke Drive. Coba lagi atau logout+login ulang.");
     } finally {
       setDriveSyncSyncing(false);
     }
