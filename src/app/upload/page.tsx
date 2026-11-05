@@ -1080,8 +1080,8 @@ function VisitorUploadContent() {
                 <p className="text-xs text-slate-400">Siap diupload</p>
                 <p className="text-sm font-semibold text-slate-100 truncate">
                   {capturedPhotos.length} foto
-                  {frameEnabled && (
-                    <span className="text-[#D4AF37]"> • dengan bingkai</span>
+                  {collageActive && (
+                    <span className="text-[#D4AF37]"> • collage</span>
                   )}
                 </p>
               </div>
